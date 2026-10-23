@@ -1,0 +1,5 @@
+{
+  "manifestUrl": "https://github.com/encounter-plus/en-agent-updates/releases/latest/download/channel.json",
+  "assetsUrl": "https://github.com/encounter-plus/en-agent-updates/releases/download/",
+  "publicKey": "REPLACE_WITH_TRUSTED_ED25519_PUBLIC_KEY_PEM"
+}

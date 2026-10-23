@@ -1,0 +1,21 @@
+import {parseArgs} from 'node:util';
+import {readFile,mkdir,cp,writeFile} from 'node:fs/promises';
+import {resolve,join} from 'node:path';
+import {sign,createPrivateKey,createPublicKey} from 'node:crypto';
+import {json,atomicJson,noLinks,inside} from './storage.mjs';
+import {verifyBundle,validateManifest} from './releases.mjs';
+
+const {values}=parseArgs({options:{bundle:{type:'string'},out:{type:'string'},id:{type:'string'},sequence:{type:'string'},key:{type:'string'},approved:{type:'boolean'}}});
+if(!values.approved||!values.bundle||!values.out||!values.id||!values.sequence||!values.key)throw new Error('Required: --bundle --out --id --sequence --key --approved. Sign only after release checks pass.');
+const root=resolve(values.bundle),out=resolve(values.out);
+await noLinks(root);await noLinks(out);
+const original=await json(join(root,'release.json'));await verifyBundle(root,original);
+const manifest=validateManifest({...original,id:values.id,sequence:Number(values.sequence),files:original.files.map(f=>({...f,asset:f.sha256}))});
+const key=createPrivateKey(await readFile(resolve(values.key)));
+if(key.asymmetricKeyType!=='ed25519')throw new Error('An Ed25519 signing key is required');
+await mkdir(out,{recursive:true});await mkdir(join(out,manifest.id));
+for(const f of manifest.files)await cp(inside(root,f.path),join(out,manifest.id,f.asset),{force:false,errorOnExist:false});
+const payload=Buffer.from(JSON.stringify(manifest));
+await atomicJson(join(out,'channel.json'),{payload:payload.toString('base64'),signature:sign(null,payload,key).toString('base64')});
+await writeFile(join(out,'public-key.pem'),createPublicKey(key).export({type:'spki',format:'pem'}));
+console.log('Signed release prepared locally: '+out+'. Nothing uploaded.');

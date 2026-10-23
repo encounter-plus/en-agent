@@ -1,0 +1,3 @@
+import {build} from 'esbuild';
+await build({entryPoints:['src/tools-server.mjs'],outfile:'dist/tools-server.mjs',bundle:true,platform:'node',format:'esm',target:'node24',packages:'bundle',external:['sharp','playwright'],banner:{js:"import { createRequire as enAgentRequire } from 'node:module'; const require = enAgentRequire(import.meta.url);"}});
+for(const entry of ['account-service','account-proxy'])await build({entryPoints:['src/'+entry+'.mjs'],outfile:'dist/'+entry+'.mjs',bundle:true,platform:'node',format:'esm',target:'node24',packages:'bundle',banner:{js:"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);"}});

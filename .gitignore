@@ -1,0 +1,27 @@
+.local/
+node_modules/
+dist/
+*.log
+
+# Local credentials
+.env
+.env.*
+!.env.example
+
+# Test, browser and coverage output
+.playwright-mcp/
+playwright-report/
+test-results/
+coverage/
+
+# Root-local scratch work and prepared distribution output
+/.tmp*
+/.scratch*
+/.runtime*
+/release-output/
+/windows-output/
+
+# Editor and operating-system leftovers
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
