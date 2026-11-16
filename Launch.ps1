@@ -117,8 +117,8 @@ try {
     $browserLabel = New-Object System.Windows.Forms.Label
     $browserLabel.Text = 'Один браузер для действий агента и входа Encounter. GUI откроется в вашем браузере по умолчанию.'; $browserLabel.SetBounds(16,16,470,45); $browserForm.Controls.Add($browserLabel)
     $browserSelect = New-Object System.Windows.Forms.ComboBox; $browserSelect.DropDownStyle = 'DropDownList'; $browserSelect.SetBounds(16,70,470,28)
-    $browserIds = @('auto','chrome','msedge','chromium','firefox')
-    $browserSelect.Items.AddRange(@('Автоматически — найти установленный','Google Chrome','Microsoft Edge','Chromium (Playwright, если установлен)','Firefox (Playwright, если установлен)'))
+    $browserIds = @('auto','chrome','msedge','yandex','chromium','firefox')
+    $browserSelect.Items.AddRange(@('Автоматически — найти установленный','Google Chrome','Microsoft Edge','Яндекс Браузер','Chromium (Playwright, если установлен)','Firefox (Playwright, если установлен)'))
     $selectedBrowser = [Array]::IndexOf($browserIds,[string]$settings.browser); if ($selectedBrowser -lt 0) { $selectedBrowser = 0 }; $browserSelect.SelectedIndex = $selectedBrowser
     $browserForm.Controls.Add($browserSelect)
     $browserHint = New-Object System.Windows.Forms.Label; $browserHint.Text = 'Выбор сохраняется для всех игр. Личный профиль браузера не используется.'; $browserHint.SetBounds(16,110,470,40); $browserForm.Controls.Add($browserHint)

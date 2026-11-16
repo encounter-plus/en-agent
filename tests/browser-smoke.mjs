@@ -10,7 +10,7 @@ import {startPreview} from '../src/preview.mjs';
 const workspace=await mkdtemp(join(tmpdir(),'en-browser-'));
 const client=new Client({name:'en-agent-browser-smoke',version:'1.0'});
 let preview;
-const choice=chooseBrowser(await detectBrowsers(resolve('.'),{playwright:await import('playwright')}));
+const choice=chooseBrowser(await detectBrowsers(resolve('.'),{playwright:await import('playwright')}),process.argv[2]??'auto');
 async function snapshotText(result){
   const text=result.content.filter(c=>c.type==='text').map(c=>c.text).join('\n');
   const path=text.match(/\[Snapshot\]\(([^)]+)\)/)?.[1];

@@ -18,7 +18,7 @@ export function safeEvent(event,{preserveTime=false}={}){
   const value={time:preserveTime?(validTime?event.time:null):new Date().toISOString(),stage:stages.has(event.stage)?event.stage:'error'};
   if(categories.has(event.category))value.category=event.category;
   if(/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/.test(event.version??''))value.version=event.version;
-  if(['auto','chrome','msedge','chromium','firefox'].includes(event.browser))value.browser=event.browser;
+  if(['auto','chrome','msedge','yandex','chromium','firefox'].includes(event.browser))value.browser=event.browser;
   if(event.mcp)value.mcp=Object.fromEntries(['encounter','author_tools','browser'].map(name=>[name,['connected','pending','failed','disabled','needs_auth'].includes(event.mcp[name])?event.mcp[name]:'pending']));
   if(['checking','staged','current','failed'].includes(event.update))value.update=event.update;
   return value;
