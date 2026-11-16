@@ -1,6 +1,6 @@
 # Сборки en-agent для GitHub Releases
 
-Команды выполняются в PowerShell на Windows x64. Репозитории `en-agent` и `en-skills` должны лежать рядом. Нужны Node.js 24+, npm, pnpm, Windows PowerShell, .NET Framework 4.8 с C# compiler и заранее полученный бинарник OpenCode **2.0.32**. Путь к нему задаётся ниже. `npm run build` собирает только JavaScript launcher; для выпуска также нужны native EXE, skills и runtime.
+Команды выполняются в PowerShell на Windows x64. Репозитории `en-agent` и `en-skills` должны лежать рядом. Нужны Node.js 24+, npm, pnpm, Windows PowerShell, .NET Framework 4.8 с C# compiler и заранее полученный бинарник OpenCode версии из [config/opencode.json](../config/opencode.json) (**2.3.0**). Путь к нему задаётся ниже. `npm run build` собирает только JavaScript launcher; для выпуска также нужны native EXE, skills и runtime.
 
 ## 1. Версии и сборка компонентов
 
@@ -33,7 +33,10 @@ powershell -NoProfile -File windows/build.ps1 -Out dist/en-agent.exe
 ```powershell
 $releaseId = '0.0.1'
 $sequence = 103
-$openCode = 'C:/tools/opencode/opencode.exe'
+$openCodeVersion = (Get-Content config/opencode.json -Raw | ConvertFrom-Json).version
+npm install --prefix ".local/opencode-$openCodeVersion" --no-audit --no-fund --ignore-scripts --save-exact "@opencode/cli-windows-x64@$openCodeVersion"
+if ($LASTEXITCODE -ne 0) { throw 'OpenCode download failed' }
+$openCode = ".local/opencode-$openCodeVersion/node_modules/@opencode/cli-windows-x64/bin/opencode.exe"
 $seed = ".local/build-$releaseId"
 $bundle = "$seed/releases/$releaseId"
 $releaseOut = ".local/release-$releaseId"
@@ -42,13 +45,14 @@ $key = 'C:/release-keys/en-agent-ed25519.pem'
 node src/seed-local.mjs --home $seed --skills ../en-skills --opencode $openCode --id $releaseId --sequence $sequence
 ```
 
-Seed копирует текущий Node, OpenCode, собранные скиллы, runtime, launcher и browser MCP; создаёт `release.json` с хешами и проверяет комплект. Это ещё не подписанный выпуск. Не используйте папку своей рабочей установки как выходной каталог.
+Seed отклоняет OpenCode, если его версия не совпадает с `config/opencode.json`. Он копирует текущий Node, OpenCode, собранные скиллы, runtime, launcher и browser MCP; создаёт `release.json` с хешами и проверяет комплект. Это ещё не подписанный выпуск. Не используйте папку своей рабочей установки как выходной каталог.
 
 ## 3. Проверить комплект
 
 ```powershell
 node tests/opencode-smoke.mjs $seed .local/games/release-smoke
 node tests/memory-smoke.mjs $seed
+powershell -NoProfile -File tests/launcher-support-smoke.ps1
 npm run test:browser
 ```
 

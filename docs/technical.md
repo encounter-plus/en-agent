@@ -14,11 +14,17 @@
 
 ## Границы первой реализации
 
-Поддерживается только OpenCode v2; закреплён и проверен 2.0.32 (`@opencode/cli`, не старый `opencode-ai`). Комплекты v1 отклоняются. Launcher запускает изолированный `serve --stdio`, проверяет API и MCP, затем открывает готовый GUI по одноразовой pairing-ссылке. Пароль сервера создаётся на запуск, не сохраняется и не выводится в журнал. Общий фоновый сервис OpenCode не используется. Windows + установленный поддерживаемый браузер — текущая целевая среда. Нативный EXE запускает PowerShell GUI; политика организации должна разрешать PowerShell. Подписание EXE не отменяет политики организации.
+Поддерживается только OpenCode v2; закреплён в [config/opencode.json](../config/opencode.json) и проверен 2.3.0 (`@opencode/cli`, не старый `opencode-ai`). Комплекты v1 отклоняются. Launcher запускает изолированный `serve --stdio`, проверяет API и MCP, затем открывает готовый GUI по одноразовой pairing-ссылке. Пароль сервера создаётся на запуск, не сохраняется и не выводится в журнал. Общий фоновый сервис OpenCode не используется. Windows + установленный поддерживаемый браузер — текущая целевая среда. Нативный EXE запускает PowerShell GUI; политика организации должна разрешать PowerShell. Подписание EXE не отменяет политики организации.
 
 Windows ZIP, установщик и подписанные файлы обновления публикуются в GitHub Releases. Подпись манифеста обновлений не является Authenticode-подписью установщика. Локальный seed — средство разработчика. Google Docs/Sheets редактируются через браузер: агент читает источник, показывает конкретные правки, получает одобрение и проверяет сохранение. Для закрытых документов пользователь входит в Google в управляемом браузере. Ключ Exa можно передать через `EXA_API_KEY`; инструкция ниже. Подключение модели выполняется в готовом GUI OpenCode.
 
 Аккаунт Encounter подключается кнопкой «Аккаунт Encounter» в launcher. Авторские live-записи и платные модельные вызовы не входят в автоматические тесты.
+
+## Проверка обновлений OpenCode
+
+Последняя успешная проверка: **2026-11-16**. В официальном npm-пакете `@opencode/cli` и [upstream-релизе](https://github.com/anomalyco/opencode/releases/tag/v2.3.0) найдена стабильная версия **2.3.0**, опубликованная 2026-11-13. Локальный комплект с **2.3.0** прошёл проверки API, pairing/GUI, трёх MCP, памяти игры, повторного запуска EXE и обновления с 2.0.32 с сохранением сессии. Публикация обновления не выполнялась. На дату проверки общий GitHub `releases/latest` указывал на **1.19.5**, поэтому он не подходит для выбора версии v2.
+
+Частота и условия следующей проверки определены в [AGENTS.md](../AGENTS.md). Дата выше относится к проверке доступности, а не к установке обновления.
 
 ## Аккаунт Encounter
 
@@ -70,7 +76,7 @@ Launcher передаёт окружение процессу OpenCode; ключ
 
 ## Разработка и локальный пилот
 
-Нужны Node >=24, собранный соседний en-skills, его runtime и бинарник OpenCode 2.0.32. `npm ci`, затем `npm test`; `npm run test:browser` дополнительно открывает видимый браузер агента и проверяет auto-reload на синтетической странице.
+Нужны Node >=24, собранный соседний en-skills, его runtime и бинарник OpenCode версии из `config/opencode.json` (2.3.0). `npm ci`, затем `npm test`; `npm run test:browser` дополнительно открывает видимый браузер агента и проверяет auto-reload на синтетической странице.
 
 ```powershell
 node src/seed-local.mjs --home .local/exa-ready --skills ../en-skills --opencode C:/absolute/path/opencode.exe --id 0.0.1-local.1 --sequence 1
@@ -110,7 +116,7 @@ node src/prepare-release.mjs --bundle PATH_TO_VERIFIED_BUNDLE --out RELEASE_OUTP
 
 Перед одобрением проверить `npm test`, видимый browser smoke, настоящий OpenCode с тремя MCP, две игры без Git, авторский workflow на выбранной модели, вход Encounter и браузерный процесс Google и обновление между двумя комплектами. Bootstrap protocol 1: Launch.ps1, Install.ps1 и Uninstall.ps1 заменяются атомарно из проверенного комплекта после успешного запуска. Минимальный EXE-dispatcher обновляется установщиком; неизвестный bootstrapProtocol отклоняется.
 
-Контракты v2 сверены с исходниками тега [v2.0.32](https://github.com/anomalyco/opencode/tree/v2.0.32): [конфигурация](https://github.com/anomalyco/opencode/blob/v2.0.32/packages/schema/src/config.ts), [MCP](https://github.com/anomalyco/opencode/blob/v2.0.32/packages/schema/src/mcp.ts), [API и pairing](https://github.com/anomalyco/opencode/blob/v2.0.32/packages/protocol/src/groups/server.ts). Шаблон папки игры en-skills остаётся версии 1: его версия независима от OpenCode и схемы хранения launcher. Старые локальные v1-пилоты не обновляются на месте; для v2 создаётся новая установка.
+Контракты v2 проверены smoke-тестами; исходники тега [v2.3.0](https://github.com/anomalyco/opencode/tree/v2.3.0): [конфигурация](https://github.com/anomalyco/opencode/blob/v2.3.0/packages/schema/src/config.ts), [MCP](https://github.com/anomalyco/opencode/blob/v2.3.0/packages/schema/src/mcp.ts), [API и pairing](https://github.com/anomalyco/opencode/blob/v2.3.0/packages/protocol/src/groups/server.ts). Шаблон папки игры en-skills остаётся версии 1: его версия независима от OpenCode и схемы хранения launcher. Старые локальные v1-пилоты не обновляются на месте; для v2 создаётся новая установка.
 
 ## Браузер агента
 

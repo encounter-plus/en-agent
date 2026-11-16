@@ -44,6 +44,27 @@ function Write-LauncherPreferences($Value) {
   if (Test-Path -LiteralPath $preferences) { [IO.File]::Replace($temporary,$preferences,$null) }
   else { [IO.File]::Move($temporary,$preferences) }
 }
+function Export-LauncherSupport([string]$InstallDirectory, [string]$NodePath, [string]$BundleDirectory, [string]$FailureLog) {
+  $directory = Join-Path ([IO.Path]::GetTempPath()) ('en-agent-support-' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8))
+  [void][IO.Directory]::CreateDirectory($directory)
+  $notes = @('Диагностика en-agent. Отправьте эту папку разработчику.', 'Журналы launcher могут содержать локальные пути и текст ошибок. Проверьте их перед отправкой.', 'История чатов, данные игры, настройки аккаунтов и внутренние логи OpenCode не включены.')
+  $exporter = if ($BundleDirectory) { Join-Path $BundleDirectory 'launcher/src/diagnostics.mjs' } else { $null }
+  if ($NodePath -and $exporter -and (Test-Path -LiteralPath $NodePath) -and (Test-Path -LiteralPath $exporter)) {
+    try {
+      & $NodePath $exporter $InstallDirectory (Join-Path $directory 'diagnostic-export.json') 2>$null
+      if ($LASTEXITCODE -ne 0) { throw 'Export failed' }
+    } catch { $notes += 'Не удалось собрать структурированную диагностику.' }
+  } else { $notes += 'Структурированная диагностика недоступна: комплект не загрузился.' }
+  foreach ($name in @('launcher-output.log','launcher-error.log','en-agent-launcher-failure.log')) {
+    $source = Join-Path $InstallDirectory $name
+    if ($name -eq 'en-agent-launcher-failure.log' -and $FailureLog) { $source = $FailureLog }
+    if (Test-Path -LiteralPath $source) {
+      [IO.File]::WriteAllText((Join-Path $directory $name), (Read-LauncherLog $source), (New-Object Text.UTF8Encoding $false))
+    }
+  }
+  [IO.File]::WriteAllLines((Join-Path $directory 'README.txt'), $notes, (New-Object Text.UTF8Encoding $false))
+  return $directory
+}
 function Get-LauncherFailureMessage($Failure, [string]$InstallDirectory, [string]$Stage) {
   # Keep this local log separate from the allowlisted diagnostic export. Do not
   # serialize invocation source, preferences, request contents or environment.
@@ -60,12 +81,14 @@ function Get-LauncherFailureMessage($Failure, [string]$InstallDirectory, [string
     stack=$Failure.ScriptStackTrace; exceptions=$causes
   }
   $saved = $null
+  $script:launcherFailureLog = $null
   $writeFailures = @()
   foreach ($directory in @($InstallDirectory, [IO.Path]::GetTempPath())) {
     try {
       $path = Join-Path $directory 'en-agent-launcher-failure.log'
       [IO.File]::AppendAllText($path, (($entry | ConvertTo-Json -Depth 6 -Compress) + [Environment]::NewLine), (New-Object Text.UTF8Encoding $false))
       $saved = $path
+      $script:launcherFailureLog = $path
       break
     } catch { $writeFailures += $_.Exception.Message }
   }
@@ -201,10 +224,12 @@ try {
     $logPath = Join-Path $HomeDirectory ('diagnostics\events-' + [DateTime]::UtcNow.ToString('yyyy-MM-dd') + '.jsonl')
     if (Test-Path -LiteralPath $logPath) { Start-Process notepad.exe -ArgumentList ('"' + $logPath + '"') }
   })
-  $exportButton = New-Object System.Windows.Forms.Button; $exportButton.Text='Экспорт диагностики'; $exportButton.SetBounds(16,225,180,32); $form.Controls.Add($exportButton)
+  $exportButton = New-Object System.Windows.Forms.Button; $exportButton.Text='Отправить журнал'; $exportButton.SetBounds(16,225,180,32); $form.Controls.Add($exportButton)
   $exportButton.Add_Click({
-    & $node (Join-Path $bundle 'launcher/src/diagnostics.mjs') $HomeDirectory (Join-Path $HomeDirectory 'diagnostic-export.json')
-    [void][System.Windows.Forms.MessageBox]::Show(('Файл: ' + (Join-Path $HomeDirectory 'diagnostic-export.json')),'Диагностика')
+    try {
+      $support = Export-LauncherSupport $HomeDirectory $node $bundle $script:launcherFailureLog
+      Start-Process explorer.exe -ArgumentList ('"' + $support + '"')
+    } catch { [void][System.Windows.Forms.MessageBox]::Show(('Не удалось собрать журнал: ' + $_.Exception.Message),'Диагностика','OK','Error') }
   })
   $retry = New-Object System.Windows.Forms.Button; $retry.Text='Повторить запуск'; $retry.SetBounds(215,225,190,32); $retry.Enabled=$false; $form.Controls.Add($retry)
   $retry.Add_Click({
@@ -248,7 +273,12 @@ try {
   $timer.Start(); [void]$form.ShowDialog(); $timer.Dispose()
 } catch {
   $failureMessage = Get-LauncherFailureMessage $_ $HomeDirectory $launchStage
-  [void][System.Windows.Forms.MessageBox]::Show($failureMessage, 'en-agent', 'OK', 'Error')
+  if ([System.Windows.Forms.MessageBox]::Show(($failureMessage + "`r`n`r`nОткрыть папку с диагностикой и журналами для отправки?"), 'en-agent', 'YesNo', 'Error') -eq 'Yes') {
+    try {
+      $support = Export-LauncherSupport $HomeDirectory $node $bundle $script:launcherFailureLog
+      Start-Process explorer.exe -ArgumentList ('"' + $support + '"')
+    } catch { [void][System.Windows.Forms.MessageBox]::Show(('Не удалось собрать журнал: ' + $_.Exception.Message),'Диагностика','OK','Error') }
+  }
 } finally {
   if ($focusTimer) { $focusTimer.Stop(); $focusTimer.Dispose() }
   if ($ownsLauncher) { [EnAgentLauncherWindow]::Owner.ReleaseMutex() }

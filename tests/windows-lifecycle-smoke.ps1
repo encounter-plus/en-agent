@@ -43,6 +43,13 @@ try {
   if (!$retry) { throw 'Retry button missing' }
   Wait-Condition { $retry.Current.IsEnabled }
   Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public static class EnSmokeClick { [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hwnd,int msg,IntPtr w,IntPtr l); }'
+  $exportsBefore=@(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Filter 'en-agent-support-*' | ForEach-Object FullName)
+  $export=$window.FindFirst([Windows.Automation.TreeScope]::Descendants,(New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty,'Отправить журнал')))
+  if (!$export -or !$export.Current.NativeWindowHandle) { throw 'Support export button missing' }
+  [void][EnSmokeClick]::SendMessage([IntPtr]$export.Current.NativeWindowHandle,0xF5,[IntPtr]::Zero,[IntPtr]::Zero)
+  $support=@(Get-ChildItem -LiteralPath ([IO.Path]::GetTempPath()) -Directory -Filter 'en-agent-support-*' | Where-Object { $_.FullName -notin $exportsBefore })
+  if ($support.Count -ne 1) { throw 'Support button must create one report folder' }
+  foreach ($file in @('diagnostic-export.json','launcher-error.log','README.txt')) { if (!(Test-Path -LiteralPath (Join-Path $support[0].FullName $file))) { throw "Support file missing after runtime crash: $file" } }
   if (!$retry.Current.NativeWindowHandle) { throw 'Retry native button handle missing' }
   [void][EnSmokeClick]::SendMessage([IntPtr]$retry.Current.NativeWindowHandle,0xF5,[IntPtr]::Zero,[IntPtr]::Zero)
   Wait-Condition { (Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json).stage -eq 'ready' }
@@ -60,7 +67,7 @@ try {
   [IO.File]::WriteAllText((Join-Path $HomeDirectory 'stop.request'),'stop')
   if (!$wrapper.WaitForExit(20000)) { throw 'Normal shutdown failed' }
   Wait-Condition { !(Test-Path -LiteralPath $lockPath) }
-  Write-Output 'PASS: native EXE, three rapid duplicates, managed Edge restart, OpenCode crash and Retry button, GUI crash cleanup, Node crash recovery, normal shutdown'
+  Write-Output 'PASS: native EXE, three rapid duplicates, managed Edge restart, OpenCode crash, Support export and Retry buttons, GUI crash cleanup, Node crash recovery, normal shutdown'
 } finally {
   if ($wrapper -and !$wrapper.HasExited) {
     [IO.File]::WriteAllText((Join-Path $HomeDirectory 'stop.request'),'stop')

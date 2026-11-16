@@ -13,6 +13,8 @@ if(!values.home||!values.skills||!values.opencode)throw new Error('Required: --h
 const home=resolve(values.home),skills=resolve(values.skills),binary=resolve(values.opencode);
 const version=execFileSync(binary,['--version'],{encoding:'utf8',windowsHide:true}).trim().replace(/^opencode v/,'');
 if(!/^2\.\d+\.\d+$/.test(version))throw new Error('Local seed requires OpenCode v2');
+const pinned=JSON.parse(await readFile(new URL('../config/opencode.json',import.meta.url),'utf8'));
+if(version!==pinned.version)throw new Error(`Local seed requires pinned OpenCode ${pinned.version}; received ${version}`);
 await noLinks(home);
 if(await optionalJson(join(home,'state.json')))throw new Error('Local seed requires a fresh installation home');
 const id=values.id;if(!id||!/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/.test(id))throw Error('Required: explicit valid --id');const root=join(home,'releases',id);await mkdir(root,{recursive:true});
