@@ -44,9 +44,40 @@ function Write-LauncherPreferences($Value) {
   if (Test-Path -LiteralPath $preferences) { [IO.File]::Replace($temporary,$preferences,$null) }
   else { [IO.File]::Move($temporary,$preferences) }
 }
+function Get-LauncherFailureMessage($Failure, [string]$InstallDirectory, [string]$Stage) {
+  # Keep this local log separate from the allowlisted diagnostic export. Do not
+  # serialize invocation source, preferences, request contents or environment.
+  $causes = @()
+  $exception = $Failure.Exception
+  while ($null -ne $exception) {
+    $causes += @{type=$exception.GetType().FullName; message=$exception.Message; hresult=$exception.HResult}
+    $exception = $exception.InnerException
+  }
+  $entry = [ordered]@{
+    time=[DateTime]::UtcNow.ToString('o'); stage=$Stage; pid=$PID
+    errorId=$Failure.FullyQualifiedErrorId
+    script=$Failure.InvocationInfo.ScriptName; line=$Failure.InvocationInfo.ScriptLineNumber
+    stack=$Failure.ScriptStackTrace; exceptions=$causes
+  }
+  $saved = $null
+  $writeFailures = @()
+  foreach ($directory in @($InstallDirectory, [IO.Path]::GetTempPath())) {
+    try {
+      $path = Join-Path $directory 'en-agent-launcher-failure.log'
+      [IO.File]::AppendAllText($path, (($entry | ConvertTo-Json -Depth 6 -Compress) + [Environment]::NewLine), (New-Object Text.UTF8Encoding $false))
+      $saved = $path
+      break
+    } catch { $writeFailures += $_.Exception.Message }
+  }
+  $message = "Не удалось запустить комплект.`r`nЭтап: $Stage`r`nПричина: " + $Failure.Exception.Message
+  if ($saved) { $message += "`r`n`r`nПодробности сохранены в:`r`n$saved" }
+  else { $message += "`r`n`r`nНе удалось сохранить лог: " + ($writeFailures -join '; ') }
+  return $message
+}
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName Microsoft.VisualBasic
 [System.Windows.Forms.Application]::EnableVisualStyles()
+$launchStage = 'Инициализация launcher'
 try {
   $HomeDirectory = [IO.Path]::GetFullPath($HomeDirectory)
   $ownsLauncher = [EnAgentLauncherWindow]::Acquire($HomeDirectory)
@@ -63,6 +94,7 @@ try {
     }
   })
   $focusTimer.Start()
+  $launchStage = 'Чтение установленного комплекта'
   $state = Get-Content -LiteralPath (Join-Path $HomeDirectory 'state.json') -Raw | ConvertFrom-Json
   if ($state.current -notmatch '^\d+\.\d+\.\d+(-[a-z0-9.-]+)?$') { throw 'Некорректная установленная версия.' }
   $bundle = Join-Path $HomeDirectory ('releases\' + $state.current)
@@ -75,8 +107,10 @@ try {
   $picker.ShowNewFolderButton = $true
   $preferences = Join-Path $HomeDirectory 'preferences.json'
   $settings = @{}
+  $launchStage = 'Чтение настроек'
   if (Test-Path -LiteralPath $preferences) { $existing = Get-Content -LiteralPath $preferences -Raw | ConvertFrom-Json; foreach ($property in $existing.PSObject.Properties) { $settings[$property.Name] = $property.Value } }
   if (!$ResumeLastGame) {
+    $launchStage = 'Выбор браузера'
     $browserForm = New-Object System.Windows.Forms.Form
     $browserForm.Text = 'Браузер агента — en-agent'; $browserForm.Width = 520; $browserForm.Height = 245; $browserForm.StartPosition = 'CenterScreen'
     $browserForm.Add_Shown({ [void][EnAgentLauncherWindow]::ShowWindow($browserForm.Handle,5); $browserForm.Activate() })
@@ -91,8 +125,10 @@ try {
     $browserContinue = New-Object System.Windows.Forms.Button; $browserContinue.Text = 'Продолжить'; $browserContinue.SetBounds(350,155,135,32); $browserContinue.DialogResult = 'OK'; $browserForm.Controls.Add($browserContinue); $browserForm.AcceptButton = $browserContinue
     if ($browserForm.ShowDialog() -ne 'OK') { $browserForm.Dispose(); return }
     $settings.browser = $browserIds[$browserSelect.SelectedIndex]; $browserForm.Dispose()
+    $launchStage = 'Сохранение настроек браузера'
     Write-LauncherPreferences $settings
   }
+  $launchStage = 'Выбор папки игры'
   if (Test-Path -LiteralPath $preferences) { $picker.SelectedPath = (Get-Content -LiteralPath $preferences -Raw | ConvertFrom-Json).game }
   if (!$ResumeLastGame -or !$picker.SelectedPath) {
     if ($picker.ShowDialog() -ne 'OK') { return }
@@ -103,14 +139,17 @@ try {
     $name = [Microsoft.VisualBasic.Interaction]::InputBox('Название новой игры', 'en-agent', (Split-Path $game -Leaf))
     if ([string]::IsNullOrWhiteSpace($name)) { return }
   }
+  $launchStage = 'Сохранение запроса запуска'
   $request = Join-Path $HomeDirectory 'launch-request.json'
   [IO.File]::WriteAllText($request, (@{game=$game;name=$name} | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))
   $outFile = Join-Path $HomeDirectory 'launcher-output.log'
   $errFile = Join-Path $HomeDirectory 'launcher-error.log'
   # These arguments are Windows file paths; quotes cannot occur in path components.
   $arguments = '"' + $cli + '" --home "' + $HomeDirectory + '" --request "' + $request + '" --parent-pid ' + $PID + ' --parent-birth ' + (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks
+  $launchStage = 'Запуск процесса комплекта'
   $process = Start-Process -FilePath $node -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
   $null = $process.Handle
+  $launchStage = 'Работа окна launcher'
   $form = New-Object System.Windows.Forms.Form
   $form.Add_Shown({ [void][EnAgentLauncherWindow]::ShowWindow($form.Handle,5); $form.Activate() })
   $form.Text = 'en-agent'; $form.Width = 580; $form.Height = 390
@@ -208,7 +247,8 @@ try {
   })
   $timer.Start(); [void]$form.ShowDialog(); $timer.Dispose()
 } catch {
-  [void][System.Windows.Forms.MessageBox]::Show('Не удалось запустить комплект. Проверьте установку и диагностику.', 'en-agent', 'OK', 'Error')
+  $failureMessage = Get-LauncherFailureMessage $_ $HomeDirectory $launchStage
+  [void][System.Windows.Forms.MessageBox]::Show($failureMessage, 'en-agent', 'OK', 'Error')
 } finally {
   if ($focusTimer) { $focusTimer.Stop(); $focusTimer.Dispose() }
   if ($ownsLauncher) { [EnAgentLauncherWindow]::Owner.ReleaseMutex() }

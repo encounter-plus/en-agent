@@ -6,8 +6,8 @@ using System.Windows.Forms;
 #if SETUP
 using System.IO.Compression;
 #endif
-[assembly: AssemblyVersion("0.0.1.0")]
-[assembly: AssemblyFileVersion("0.0.1.0")]
+[assembly: AssemblyVersion("0.0.2.0")]
+[assembly: AssemblyFileVersion("0.0.2.0")]
 [assembly: AssemblyProduct("en-agent")]
 static class Bootstrap {
   [STAThread] static int Main(string[] args) {
