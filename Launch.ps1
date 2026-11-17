@@ -41,7 +41,9 @@ function Read-LauncherLog([string]$Path) {
 function Write-LauncherPreferences($Value) {
   $temporary=$preferences+'.'+[guid]::NewGuid().ToString('N')+'.tmp'
   [IO.File]::WriteAllText($temporary,($Value | ConvertTo-Json),(New-Object Text.UTF8Encoding $false))
-  if (Test-Path -LiteralPath $preferences) { [IO.File]::Replace($temporary,$preferences,$null) }
+  # Windows PowerShell converts $null to an empty string for this string argument.
+  # File.Replace requires a real null to omit the backup path.
+  if (Test-Path -LiteralPath $preferences) { [IO.File]::Replace($temporary,$preferences,[NullString]::Value) }
   else { [IO.File]::Move($temporary,$preferences) }
 }
 function Export-LauncherSupport([string]$InstallDirectory, [string]$NodePath, [string]$BundleDirectory, [string]$FailureLog) {
