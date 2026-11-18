@@ -14,6 +14,7 @@ const home=resolve(process.argv[2]),model=process.argv[3]??'big-pickle';
 const bundle=await installed(home,(await json(join(home,'state.json'))).current);
 const installedMode=process.argv.includes('--installed');
 const {startOpenCode,waitForMcp}=await import(pathToFileURL(installedMode?join(bundle.root,'launcher/src/opencode.mjs'):resolve('src/opencode.mjs')));
+const {prepareSkills}=await import(pathToFileURL(installedMode?join(bundle.root,'launcher/src/skills-store.mjs'):resolve('src/skills-store.mjs')));
 const base=await mkdtemp(resolve('.local/import-model-')),root=installedMode?bundle.root:join(base,'bundle'),work=join(base,'game'),evidence=join(base,'evidence');
 await mkdir(work);await mkdir(evidence);
 let manifest={...bundle.manifest},accountEnvironment={},browserChoice;
@@ -25,9 +26,12 @@ if(!installedMode){
 await mkdir(root);
 await copyFile(join(bundle.root,bundle.manifest.nodePath),join(root,'node.exe'));
 await copyFile(join(bundle.root,bundle.manifest.opencode.path),join(root,'opencode.exe'));
-await cp(resolve('../en-skills/dist/skills'),join(root,'skills'),{recursive:true});
+// Match the skill files to the integrity manifest of the selected bundle.
+await cp(join(bundle.root,bundle.manifest.skillsPath),join(root,'skills'),{recursive:true});
 await mkdir(join(root,'launcher/src'),{recursive:true});
 await copyFile(resolve('src/agent-instructions.md'),join(root,'launcher/src/agent-instructions.md'));
+await mkdir(join(root,'runtime/scripts'),{recursive:true});
+await copyFile(join(bundle.root,'runtime/scripts/windows-credential.ps1'),join(root,'runtime/scripts/windows-credential.ps1'));
 await build({entryPoints:[resolve('../en-skills/runtime/tests/import-model-server.ts')],outfile:join(root,'fixture.mjs'),bundle:true,platform:'node',format:'esm',target:'node24'});
 // startOpenCode's managed command invokes this wrapper with the fixture's sole local output root.
 await writeFile(join(root,'mcp.mjs'),`process.argv[2]=${JSON.stringify(evidence)};await import('./fixture.mjs');`);
@@ -70,13 +74,18 @@ const template=JSON.parse(await readFile(join(root,'skills/game-author/scripts/w
 await writeFile(join(work,'AGENTS.md'),template.files['AGENTS.md']+'\nUse game-import. This is a synthetic test. Use only the supplied synthetic MCP for table and game operations. Never access a real game.');
 for(const name of ['GAME.md','decisions.md','tasks.md'])await writeFile(join(work,name),template.files[name].replaceAll('{{GAME_NAME}}','Synthetic'));
 const config=join(base,'config.json');
-const permissions=[{action:'*',resource:'*',effect:'deny'},{action:'skill',resource:'game-import',effect:'allow'},{action:'read',resource:join(root,'skills').replaceAll('\\','/')+'/*',effect:'allow'},{action:'external_directory',resource:join(root,'skills').replaceAll('\\','/')+'/*',effect:'allow'},...['GAME.md','decisions.md','tasks.md'].flatMap(resource=>[{action:'read',resource,effect:'allow'},{action:'edit',resource,effect:'allow'}]),{action:'encounter_*',resource:'*',effect:'allow'}];
+const selectedSkills=await prepareSkills({root,manifest},join(base,'state'));
+const permissions=[{action:'*',resource:'*',effect:'deny'},{action:'skill',resource:'game-import',effect:'allow'},...['read','external_directory'].map(action=>({action,resource:selectedSkills.directory.replaceAll('\\','/')+'/*',effect:'allow'})),...['GAME.md','decisions.md','tasks.md'].flatMap(resource=>[{action:'read',resource,effect:'allow'},{action:'edit',resource,effect:'allow'}]),{action:'encounter_*',resource:'*',effect:'allow'}];
 await writeFile(config,JSON.stringify({permissions}));
 const previous=process.env.OPENCODE_CONFIG;process.env.OPENCODE_CONFIG=config;
 let runtime;
 try{
  runtime=await startOpenCode({root,manifest},join(base,'state'),work,{accountEnvironment,browserChoice});
  await waitForMcp(runtime,work,installedMode?['encounter','author_tools','browser']:['encounter']);
+ if(process.argv.includes('--preflight-only')){
+  assert.ok(permissions.some(p=>p.action==='read'&&p.resource===selectedSkills.directory.replaceAll('\\','/')+'/*'));
+  console.log('PASS: import smoke starts with bundle-matched skills and active-generation permissions; no model call.');
+ }else{
  const post=async(path,body)=>{const r=await runtime.request(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});assert.ok(r.ok,await r.clone().text());return r.json();};
  const session=(await post('/api/session',{location:{directory:work},model:{providerID:'opencode',id:model},permissions})).data;
  await writeFile(join(base,'run.json'),JSON.stringify({model,session:session.id,base}));console.log('REAL_MODEL_RUN '+base);
@@ -118,6 +127,7 @@ try{
  await writeFile(join(base,'memory-result.json'),JSON.stringify({updated:memory.includes('synthetic.invalid')&&memory.includes('42')},null,2));
  await writeFile(join(base,'result.json'),JSON.stringify({status:'passed',model,session:session.id,checks:['names','brief-literal','dialogue-1-only','html','organizer-css-all-levels','css-targets-dialogue','whole-plan-complete','lost-response-recovery','existing-level','preserve-unrelated-task','sectors-exact-answers','bonus','hint','additional-task','external-css','finished-turn','russian-final','unchanged-settings','game-memory']},null,2));
  console.log('PASS REAL MODEL '+model+' '+base);
+ }
 }finally{if(runtime)await runtime.stop();if(previous===undefined)delete process.env.OPENCODE_CONFIG;else process.env.OPENCODE_CONFIG=previous;
  if(preserved){assert.deepEqual(await fingerprints(preferences.game),preserved.game);assert.deepEqual(await fingerprints(join(home,'data')),preserved.data);assert.equal(hash(await readFile(join(home,'preferences.json'))),preserved.preferences);assert.equal(hash(await readFile(join(home,'state.json'))),preserved.state);await installed(home,manifest.id);await writeFile(join(base,'preservation.json'),JSON.stringify({realGameUnchanged:true,installedDataUnchanged:true,preferencesUnchanged:true,installedStateUnchanged:true,bundleIntegrityVerified:true},null,2));}
 }

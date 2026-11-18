@@ -29,6 +29,7 @@ await cp(join(skills,'runtime','scripts','windows-credential.ps1'),join(root,'ru
 await cp(join(project,'dist','tools-server.mjs'),join(root,'runtime','tools-server.mjs'));
 for(const name of ['account-service','account-proxy'])await cp(join(project,'dist',name+'.mjs'),join(root,'runtime',name+'.mjs'));
 await cp(join(project,'src'),join(root,'launcher','src'),{recursive:true});
+await cp(join(project,'dist','skills-validation.mjs'),join(root,'launcher','src','skills-validation.mjs'));
 await cp(join(project,'Launch.ps1'),join(root,'launcher','Launch.ps1'));
 await cp(join(project,'Account.ps1'),join(root,'launcher','Account.ps1'));
 await cp(join(project,'en-agent.vbs'),join(root,'launcher','en-agent.vbs'));

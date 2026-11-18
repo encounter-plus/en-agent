@@ -6,18 +6,19 @@ import {createServer} from 'node:net';
 import {mkdir} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {inside} from './storage.mjs';
+import {prepareSkills} from './skills-store.mjs';
 
-export function configuration(root,m,home,accountEnvironment={},browserChoice,workspace) {
+export function configuration(root,m,home,accountEnvironment={},browserChoice,workspace,skillsDirectory) {
   const config={
     update:'disable',
     // Shared communication policy and selected-game memory; project config stays disabled.
     instructions:[inside(root,'launcher/src/agent-instructions.md'),...(workspace?[resolve(workspace,'AGENTS.md')]:[])],
     websearch:{provider:'exa'},
-    skills:[inside(root,m.skillsPath)],
+    skills:[skillsDirectory??inside(root,m.skillsPath)],
     mcp:{servers:{encounter:{type:'local',command:[inside(root,m.nodePath),inside(root,m.mcpPath)],disabled:false,codemode:false,timeout:{startup:30000,catalog:30000,execution:30000},environment:{ENCOUNTER_DATA_DIR:join(home,'data','encounter')}}}},
   };
   if(m.accountProxyPath){config.mcp.servers.encounter.command=[inside(root,m.nodePath),inside(root,m.accountProxyPath),inside(root,m.mcpPath)];Object.assign(config.mcp.servers.encounter.environment,accountEnvironment);config.mcp.servers.encounter.timeout={startup:60000,catalog:30000,execution:120000};}
-  if(m.toolsPath)config.mcp.servers.author_tools={type:'local',command:[inside(root,m.nodePath),inside(root,m.toolsPath)],disabled:false,codemode:false,timeout:{startup:30000,catalog:30000,execution:30000}};
+  if(m.toolsPath)config.mcp.servers.author_tools={type:'local',command:[inside(root,m.nodePath),inside(root,m.toolsPath)],environment:{EN_AGENT_HOME:home,EN_AGENT_BUNDLE_ROOT:root,EN_AGENT_SKILLS_ACTIVE:skillsDirectory??inside(root,m.skillsPath)},disabled:false,codemode:false,timeout:{startup:30000,catalog:30000,execution:300000}};
   // A cold browser launch plus its navigation can outlive a 30s MCP call.
   if(m.browserPath)config.mcp.servers.browser={type:'local',command:[inside(root,m.nodePath),inside(root,m.browserPath),...browserMcpArgs(browserChoice,home)],disabled:false,codemode:false,timeout:{startup:60000,catalog:30000,execution:150000}};
   return config;
@@ -57,13 +58,14 @@ export async function stopTree(child) {
   else {try{process.kill(-child.pid,'SIGTERM');}catch(e){if(e.code!=='ESRCH')throw e;}}
 }
 export async function startOpenCode({root,manifest:m},home,workspace,{timeout=60000,accountEnvironment={},browserChoice}={}) {
+  const skills=await prepareSkills({root,manifest:m},home);
   const port=await freePort();
   const password=randomBytes(32).toString('hex');
   const data=join(home,'data');await mkdir(data,{recursive:true});
   const searchEnv=process.platform==='win32'?await exaEnvironment(exaStore(root,home),process.env):process.env;
   const env={...searchEnv,
     XDG_DATA_HOME:join(data,'share'),XDG_CONFIG_HOME:join(data,'config'),XDG_CACHE_HOME:join(data,'cache'),XDG_STATE_HOME:join(data,'state'),
-    OPENCODE_CONFIG_CONTENT:JSON.stringify(configuration(root,m,home,accountEnvironment,browserChoice,workspace)),OPENCODE_CONFIG_PROJECT_DISABLE:'true',OPENCODE_PASSWORD:password,
+    OPENCODE_CONFIG_CONTENT:JSON.stringify(configuration(root,m,home,accountEnvironment,browserChoice,workspace,skills.directory)),OPENCODE_CONFIG_PROJECT_DISABLE:'true',OPENCODE_PASSWORD:password,
   };
   // Stdio mode owns its lifecycle and removes the server password before starting tools.
   const child=spawn(inside(root,m.opencode.path),['serve','--stdio','--hostname','127.0.0.1','--port',String(port)],{cwd:workspace,env,windowsHide:true,detached:process.platform!=='win32',stdio:['pipe','pipe','pipe']});

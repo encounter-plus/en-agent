@@ -102,8 +102,13 @@ async function main() {
     try{state=await activatePending(home);}catch(error){
       const previous=await json(join(home,'state.json'));if(!previous.current)throw error;
       await installed(home,previous.current);
-      state={...previous,rejected:previous.pending,pending:null};await atomicJson(join(home,'state.json'),state);
-      console.log('Подготовленное обновление не прошло проверку. Запущена предыдущая версия.');
+      if(error.code==='SKILLS_BUSY'){
+        state=previous;
+        console.log('Обновление скиллов ещё завершается. Обновление приложения сохранено для следующего запуска.');
+      }else{
+        state={...previous,rejected:previous.pending,pending:null};await atomicJson(join(home,'state.json'),state);
+        console.log('Подготовленное обновление не прошло проверку. Запущена предыдущая версия.');
+      }
     }
     if(!state.current)throw new Error('No approved bundle installed. Install an en-agent release first.');
     try {

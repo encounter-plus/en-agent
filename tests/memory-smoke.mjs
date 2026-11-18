@@ -9,6 +9,7 @@ import {pathToFileURL} from 'node:url';
 const home=resolve(process.argv[2]);
 const bundle=await installed(home,(await json(join(home,'state.json'))).current);
 const {startOpenCode}=await import(pathToFileURL(join(bundle.root,'launcher/src/opencode.mjs')));
+const {prepareSkills}=await import(pathToFileURL(join(bundle.root,'launcher/src/skills-store.mjs')));
 const base=await mkdtemp(resolve('.local/memory-smoke-'));
 const root=join(base,'bundle');await mkdir(root);
 await copyFile(join(bundle.root,bundle.manifest.nodePath),join(root,'node.exe'));
@@ -18,7 +19,7 @@ await mkdir(join(root,'launcher/src'),{recursive:true});
 await copyFile(join(bundle.root,'launcher/src/agent-instructions.md'),join(root,'launcher/src/agent-instructions.md'));
 await mkdir(join(root,'runtime/scripts'),{recursive:true});
 await copyFile(join(bundle.root,'runtime/scripts/windows-credential.ps1'),join(root,'runtime/scripts/windows-credential.ps1'));
-const skills=join(root,'skills');
+let skills=join(root,'skills');
 const template=JSON.parse(await readFile(join(skills,'game-author/scripts/workspace-template.json'),'utf8'));
 let active,runtime,failure;
 const server=createServer(async(req,res)=>{
@@ -63,6 +64,7 @@ try{
   const manifest={...bundle.manifest,nodePath:'node.exe',opencode:{...bundle.manifest.opencode,path:'opencode.exe'},skillsPath:'skills'};delete manifest.accountProxyPath;delete manifest.toolsPath;delete manifest.browserPath;
   // A local inert MCP process cannot access any real engine.
   manifest.mcpPath='inert.mjs';await writeFile(join(root,manifest.mcpPath),'process.stdin.resume();');
+  skills=(await prepareSkills({root,manifest},join(base,'state-'+skill))).directory;
   runtime=await startOpenCode({root,manifest},join(base,'state-'+skill),work);
   const post=async(path,body)=>{const r=await runtime.request(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});assert.ok(r.ok,await r.clone().text());return r.json();};
   const session=(await post('/api/session',{location:{directory:work},model:{providerID:'fixture',id:'fixture'},permissions:[{action:'*',resource:'*',effect:'allow'}]})).data;

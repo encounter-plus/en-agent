@@ -2,6 +2,14 @@ import {createHash,verify,randomUUID} from 'node:crypto';
 import {mkdir,writeFile,readFile,rename,chmod,cp,lstat,rm} from 'node:fs/promises';
 import {dirname,join} from 'node:path';
 import {inside,noLinks,atomicJson,optionalJson,json} from './storage.mjs';
+import {lockSkills} from './skills-lock.mjs';
+
+async function withSkillsSnapshotLock(home,operation) {
+  const store=join(home,'data','en-skills');
+  try {await lstat(store);}catch(error){if(error.code==='ENOENT')return operation();throw error;}
+  const guard=await lockSkills(store,{waitMs:10000});
+  try{return await operation();}finally{await guard.release();}
+}
 
 export function validateManifest(m) {
   if(m?.schemaVersion!==1||!/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/.test(m.id)||!Number.isSafeInteger(m.sequence)||m.sequence<1)throw new Error('Invalid release identity');
@@ -123,7 +131,7 @@ export async function activatePending(home) {
   const state = await optionalJson(join(home, 'state.json')) ?? {};
   if (!state.pending) return state;
   const {manifest} = await installed(home, state.pending);
-  const snapshot = await backupData(home);
+  const snapshot = await withSkillsSnapshotLock(home,()=>backupData(home));
   const next = {
     ...state, ...snapshot,
     previous: state.current ?? null,
@@ -143,6 +151,10 @@ export async function markHealthy(home) {
 }
 
 export async function rejectCurrent(home) {
+  return withSkillsSnapshotLock(home,()=>restorePrevious(home));
+}
+
+async function restorePrevious(home) {
   const path = join(home, 'state.json');
   const state = await json(path);
   if (!state.probation || !state.previous) throw Error('No previous release available');
