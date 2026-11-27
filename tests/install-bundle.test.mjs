@@ -1,9 +1,14 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,writeFile,readFile,rm,unlink} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,readdir,rm,unlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,dirname} from 'node:path';
-import {createHash} from 'node:crypto';
+import {createHash,generateKeyPairSync} from 'node:crypto';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {fileURLToPath} from 'node:url';
+import {activatePending,installed,rejectCurrent,stageUpdate} from '../src/releases.mjs';
+import {prepareSkills,updateSkills} from '../src/skills-store.mjs';
 import {installBundle} from '../src/install-bundle.mjs';
 import {atomicJson,json,lock} from '../src/storage.mjs';
 
@@ -30,6 +35,53 @@ test('EXE upgrade preserves data, preferences, channel and old release; repeated
   assert.equal(await readFile(join(old,'Launch.ps1'),'utf8'),'launch 0.0.4');
 }));
 
+test('0.1.0 setup and the next signed channel update preserve downloaded skills and channel trust',()=>scenario(async base=>{
+  const old=await fixture(base,'0.1.0',119),source=await fixture(base,'0.2.0',121);
+  const root=join(source,'releases/0.2.0'),path=join(root,'release.json'),manifest=await json(path);
+  manifest.schemaVersion=2;manifest.minimumSkillsVersion='0.1.0';
+  delete manifest.skillsPath;delete manifest.skillsVersion;
+  manifest.files=manifest.files.filter(file=>!file.path.startsWith('skills/'));
+  for(const file of ['launcher/workspace/init-workspace.mjs','launcher/workspace/workspace-template.json']){
+    const body='fixture';await mkdir(dirname(join(root,file)),{recursive:true});await writeFile(join(root,file),body);
+    manifest.files.push({path:file,size:body.length,sha256:createHash('sha256').update(body).digest('hex')});
+  }
+  await atomicJson(path,manifest);
+  const fixtureTree=join(base,'download');
+  await mkdir(join(fixtureTree,'game-author'),{recursive:true});
+  await writeFile(join(fixtureTree,'game-author/SKILL.md'),'---\nname: game-author\ndescription: Synthetic skill\n---\n');
+  await updateSkills(old,async()=>({version:'0.2.2',directory:fixtureTree,source:'synthetic-download'}));
+  const before=await prepareSkills({root,manifest},old);
+  const {publicKey,privateKey}=generateKeyPairSync('ed25519');
+  const channel={...JSON.parse(await readFile(new URL('../config/channel.example.json',import.meta.url),'utf8')),publicKey:publicKey.export({type:'spki',format:'pem'})};
+  assert.ok(channel.manifestUrl.endsWith('/channel.json'));
+  for(const home of [old,source])await atomicJson(join(home,'channel.json'),channel);
+  await installBundle(source,old);
+  assert.equal((await json(join(old,'state.json'))).current,'0.2.0');
+  assert.equal((await prepareSkills({root,manifest},old)).directory,before.directory);
+  const trusted=await json(join(old,'channel.json'));
+  assert.deepEqual(trusted,channel);
+
+  const next='0.2.1',out=join(base,'release'),key=join(base,'test-key.pem');
+  await writeFile(key,privateKey.export({type:'pkcs8',format:'pem'}));
+  await promisify(execFile)(process.execPath,[fileURLToPath(new URL('../src/prepare-release.mjs',import.meta.url)),
+    '--bundle',root,'--out',out,'--id',next,'--sequence','122','--key',key,'--approved'],{windowsHide:true});
+  assert.deepEqual((await readdir(out)).sort(),[next,'channel.json','public-key.pem']);
+  const fetcher=async url=>{
+    if(url===trusted.manifestUrl)return new Response(await readFile(join(out,'channel.json')));
+    const asset=new URL(url).pathname.split('/').pop();
+    assert.match(asset,/^[a-f0-9]{64}$/);
+    assert.equal(url,new URL(next+'/'+asset,trusted.assetsUrl).href);
+    return new Response(await readFile(join(out,next,asset)));
+  };
+  assert.deepEqual(await stageUpdate(old,trusted,{fetcher}),{status:'staged',id:next});
+  assert.equal((await activatePending(old)).current,next);
+  assert.equal((await prepareSkills(await installed(old,next),old)).directory,before.directory);
+  assert.deepEqual(await stageUpdate(old,trusted,{fetcher}),{status:'current'});
+  await rejectCurrent(old);
+  assert.equal((await json(join(old,'state.json'))).current,'0.2.0');
+  assert.deepEqual(await json(join(old,'channel.json')),channel);
+  assert.equal((await prepareSkills({root,manifest},old)).directory,before.directory);
+}));
 test('missing state reinstalls in the same folder without deleting host data; damaged binaries can be repaired',()=>scenario(async base=>{
   const source=await fixture(base,'0.0.4',108),home=join(base,'retained');await mkdir(join(home,'data'),{recursive:true});await writeFile(join(home,'data','chat'),'retained');await writeFile(join(home,'preferences.json'),'prefs');
   await installBundle(source,home);await unlink(join(home,'state.json'));await writeFile(join(home,'releases/0.0.4/bin/opencode'),'broken');

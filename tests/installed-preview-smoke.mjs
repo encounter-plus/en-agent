@@ -11,7 +11,9 @@ const home=resolve(process.argv[2]),run=resolve(process.argv[3]),work=join(run,'
 const bundle=await installed(home,(await json(join(home,'state.json'))).current);
 const {configuration}=await import(pathToFileURL(join(bundle.root,'launcher/src/opencode.mjs')));
 const {detectBrowsers,chooseBrowser}=await import(pathToFileURL(join(bundle.root,'launcher/src/browser-choice.mjs')));
-const config=configuration(bundle.root,bundle.manifest,join(out,'state'),{},chooseBrowser(await detectBrowsers(bundle.root)),work);
+const {prepareSkills}=await import(pathToFileURL(join(bundle.root,'launcher/src/skills-store.mjs')));
+const selectedSkills=await prepareSkills(bundle,home);
+const config=configuration(bundle.root,bundle.manifest,join(out,'state'),{},chooseBrowser(await detectBrowsers(bundle.root)),work,selectedSkills.directory);
 const state=await json(join(run,'evidence/state.json')),level=state.levels.find(l=>l.level_name==='Нейродиалог 1');
 assert.ok(level);await mkdir(join(work,'artifacts'),{recursive:true});await mkdir(out,{recursive:true});
 let html='<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'+state.messages.filter(m=>m.all_levels).map(m=>m.message_text).join('')+'</head><body>'+level.tasks.map(t=>t.task_text).join('')+'</body></html>';

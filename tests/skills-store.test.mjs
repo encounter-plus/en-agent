@@ -107,6 +107,30 @@ test('official update verifies archive and publishes extracted skills; older lat
  assert.equal((await updateEnSkills(home,root,{fetcher:network('0.0.1',bytes)})).status,'current');
  assert.deepEqual(await readdir(join(home,'skills-staging')),[]);await installed(home,b.manifest.id);
 }));
+test('external skills bootstrap, offline reuse across app upgrades, repair and no repeated ZIP',()=>scenario(async home=>{
+ const root=await extractorRoot(home), bytes=zip(Object.entries(content('downloaded'))), requests=[];
+ const official=network('0.2.0',bytes);
+ const fetcher=url=>{requests.push(url);return official(url);};
+ const app={root,manifest:{id:'1.0.0',minimumSkillsVersion:'0.1.0'}};
+ assert.equal(await prepareSkills(app,home),null);
+ await assert.rejects(updateEnSkills(home,root,{fetcher:async()=>{throw Error('offline');}}),/offline/);
+ assert.equal(await prepareSkills(app,home),null);
+ await updateEnSkills(home,root,{fetcher});
+ const initial=await prepareSkills(app,home);
+ assert.equal(initial.version,'0.2.0');
+ app.manifest.id='1.1.0';
+ assert.equal((await prepareSkills(app,home)).directory,initial.directory);
+ await updateEnSkills(home,root,{fetcher});
+ assert.equal(requests.filter(url=>url.endsWith('.zip')).length,1);
+ await independent(home,'0.3.0');
+ const newer=await prepareSkills(app,home);
+ await writeFile(join(newer.directory,'game-author/SKILL.md'),'damaged');
+ assert.equal((await prepareSkills(app,home)).directory,initial.directory);
+ await writeFile(join(initial.directory,'game-author/SKILL.md'),'damaged');
+ assert.equal(await prepareSkills(app,home),null);
+ await updateEnSkills(home,root,{fetcher});
+ assert.equal((await prepareSkills(app,home)).version,'0.2.0');
+}));
 test('application snapshots exclude mutable extraction and survive cancelled skills updates',{skip:process.platform!=='win32'},()=>scenario(async home=>{
  const old=await bundle(home,'0.1.1','0.0.2'),next=await bundle(home,'0.1.2','0.0.3');await prepareSkills(old,home);
  await atomicJson(join(home,'state.json'),{current:old.manifest.id,pending:next.manifest.id,highestSequence:old.manifest.sequence});

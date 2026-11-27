@@ -1,6 +1,6 @@
 # Сборки en-agent для GitHub Releases
 
-Команды выполняются в PowerShell на Windows x64. Репозитории `en-agent` и `en-skills` должны лежать рядом. Нужны Node.js 24+, npm, pnpm, Windows PowerShell, .NET Framework 4.8 с C# compiler и заранее полученный бинарник OpenCode версии из [config/opencode.json](../config/opencode.json) (**2.3.0**). Путь к нему задаётся ниже. `npm run build` собирает только JavaScript launcher; для выпуска также нужны native EXE, skills и runtime.
+Команды выполняются в PowerShell на Windows x64. Репозитории `en-agent` и `en-skills` должны лежать рядом. Нужны Node.js 24+, npm, pnpm, Windows PowerShell, .NET Framework 4.8 с C# compiler и заранее полученный бинарник OpenCode версии из [config/opencode.json](../config/opencode.json) (**2.4.2**). Путь к нему задаётся ниже. `npm run build` собирает только JavaScript launcher; для выпуска также нужны native EXE, исходный шаблон папки игры и runtime.
 
 ## 1. Версии и сборка компонентов
 
@@ -45,13 +45,15 @@ $key = 'C:/release-keys/en-agent-ed25519.pem'
 node src/seed-local.mjs --home $seed --skills ../en-skills --opencode $openCode --id $releaseId --sequence $sequence
 ```
 
-Seed отклоняет OpenCode, если его версия не совпадает с `config/opencode.json`. Он копирует текущий Node, OpenCode, собранные скиллы, runtime, launcher и browser MCP; создаёт `release.json` с хешами и проверяет комплект. Это ещё не подписанный выпуск. Не используйте папку своей рабочей установки как выходной каталог.
+Seed отклоняет OpenCode, если его версия не совпадает с `config/opencode.json`. Он копирует текущий Node, OpenCode, initializer и JSON-шаблон рабочей папки, runtime, launcher и browser MCP; создаёт `release.json` с хешами и проверяет комплект. Это ещё не подписанный выпуск. Не используйте папку своей рабочей установки как выходной каталог.
 
 ## 3. Проверить комплект
 
 ```powershell
+node src/cli.mjs --home $seed --game .local/games/release-smoke --name Synthetic --no-browser --smoke
 node tests/opencode-smoke.mjs $seed .local/games/release-smoke
 node tests/memory-smoke.mjs $seed
+node tests/launcher-updates-smoke.mjs $seed
 powershell -NoProfile -File tests/launcher-support-smoke.ps1
 npm run test:browser
 ```
@@ -90,6 +92,10 @@ powershell -NoProfile -File windows/build.ps1 -Out $setup -Archive $zip
 
 Для Authenticode-подписи установщика добавьте `-CertificateThumbprint` к его сборке. Контрольную сумму вычисляйте после подписи. Ed25519-подпись канала не заменяет Authenticode-подпись EXE.
 
+## Переход с ранее установленных версий
+
+Для перехода с 0.1.0 дайте пользователю ссылку на Windows-установщик из нового релиза `en-agent`. Пользователь завершает en-agent и запускает EXE, выбрав прежнюю папку установки. Установщик сохраняет чаты, настройки, скачанные скиллы и доверенный ключ канала. Этот шаг нужен один раз: launcher 0.1.0 принимает только манифест схемы 1. Новый launcher читает манифест схемы 2 по прежнему адресу `channel.json`.
+
 ## 6. Загрузка в GitHub Releases
 
 1. Проверьте чистую распаковку ZIP и, если подготовлен, установщик.
@@ -98,7 +104,7 @@ powershell -NoProfile -File windows/build.ps1 -Out $setup -Archive $zip
 4. Создайте draft Release в `encounter-plus/en-agent` с тем же тегом на коммите исходников. Добавьте **только четыре файла**: Windows ZIP, его `.sha256`, EXE-установщик и его `.sha256`. Не прикладывайте сюда манифест или файлы автообновления.
 5. Опубликуйте проверенный канал в `en-agent-updates` как latest и проверьте обновление отдельной тестовой установки через опубликованные HTTPS-адреса. Затем публикуйте пользовательский Release в `en-agent` как latest. Предварительные выпуски помечайте prerelease; они не заменяют stable-канал.
 
-Проверка доставки: `node tests/real-update-smoke.mjs <предыдущая-тестовая-установка> <releaseOut> --live`. Скрипт копирует прежнюю установку в отдельную временную папку, скачивает подписанный выпуск из опубликованного канала, запускает обновлённый комплект и проверяет сохранность синтетических данных и настроек. Для проверки нужен другой ID предыдущего комплекта и меньший sequence. Без `--live` файлы берутся из локального каталога поставки.
+Проверка доставки: `node tests/real-update-smoke.mjs <предыдущая-тестовая-установка> <releaseOut> --live`. Скрипт копирует прежнюю установку в отдельную временную папку, скачивает подписанный выпуск из опубликованного канала, запускает обновлённый комплект и проверяет сохранность синтетических данных и настроек. Для этой проверки нужна установка с поддержкой схемы 2, другим ID и меньшим sequence. Без `--live` файлы берутся из локального каталога поставки.
 
 `public-key.pem` уже включён в настройку доверия Windows-комплекта. Не загружайте приватный ключ, seed целиком, `data/` или папки игр.
 

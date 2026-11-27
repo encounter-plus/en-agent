@@ -29,13 +29,15 @@ const savedSession=await withRuntime(oldBundle,async runtime=>{
   assert.ok(response.ok,'Old OpenCode must create the synthetic session');
   const session=(await response.json()).data;assert.ok(session.id);return session;
 });
-const publicKey=await readFile(join(github,'public-key.pem'),'utf8'),envelope=await json(join(github,'channel.json'));
-const manifest=signedManifest(envelope,publicKey),channel=live?{...await json(resolve('config/channel.example.json')),publicKey}:{publicKey,manifestUrl:'https://local-fixture.invalid/channel.json',assetsUrl:'https://local-fixture.invalid/releases/'};
-await atomicJson(join(home,'channel.json'),channel);
-const result=await stageUpdate(home,channel,live?{fetcher:(url,options)=>{const address=new URL(url);console.log('Download '+address.origin+address.pathname);return fetch(url,options);}}:{fetcher:async url=>{
-  const parsed=new URL(url);assert.equal(parsed.origin,'https://local-fixture.invalid');
-  if(parsed.pathname==='/channel.json')return new Response(JSON.stringify(envelope));
-  const asset=basename(parsed.pathname);assert.ok(manifest.files.some(f=>f.asset===asset));
+const skillsState=join(home,'data/en-skills/state.json');
+const beforeSkills=await json(skillsState);
+const channel=await json(join(home,'channel.json')),envelope=await json(join(github,'channel.json'));
+const manifest=signedManifest(envelope,channel.publicKey);
+const installedUpdater=await import(pathToFileURL(join(oldBundle.root,'launcher/src/releases.mjs')));
+const result=await installedUpdater.stageUpdate(home,channel,live?{fetcher:(url,options)=>{const address=new URL(url);console.log('Download '+address.origin+address.pathname);return fetch(url,options);}}:{fetcher:async url=>{
+  if(url===channel.manifestUrl)return new Response(JSON.stringify(envelope));
+  const asset=basename(new URL(url).pathname);assert.ok(manifest.files.some(f=>f.asset===asset));
+  assert.equal(url,new URL(manifest.id+'/'+asset,channel.assetsUrl).href);
   return new Response(Readable.toWeb(createReadStream(join(github,manifest.id,asset))));
 }});
 assert.equal(result.status,'staged');assert.equal((await json(join(home,'state.json'))).current,previous);
@@ -47,6 +49,7 @@ assert.equal(await readFile(join(home,'data','synthetic-preserved'),'utf8'),'syn
 assert.equal((await json(join(home,'preferences.json'))).customPreserved,'synthetic-settings');
 assert.deepEqual(await json(join(home,'channel.json')),channel);
 assert.equal(await readFile(join(home,'Launch.ps1'),'utf8'),await readFile(join(home,'releases',manifest.id,'launcher/Launch.ps1'),'utf8'));
+if(manifest.minimumSkillsVersion)assert.deepEqual((await json(skillsState)).active,beforeSkills.active);
 await withRuntime(await installed(home,manifest.id),async runtime=>{
   const response=await runtime.request('/api/session/'+savedSession.id);
   assert.ok(response.ok,'Updated OpenCode must read the old session');

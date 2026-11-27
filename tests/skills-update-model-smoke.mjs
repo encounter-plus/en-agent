@@ -1,4 +1,6 @@
 // Opt-in: real model, actual bundled MCP/update implementation, synthetic release only.
+import {lastAssistantMessage} from './model-message.mjs';
+import {copyTestSkills} from './copied-skills.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile,readFile} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
@@ -17,6 +19,7 @@ const {startOpenCode,waitForMcp}=await import(pathToFileURL(join(bundle.root,'la
 const {skillsStatus}=await import(pathToFileURL(join(bundle.root,'launcher/src/skills-store.mjs')));
 const {detectBrowsers,chooseBrowser}=await import(pathToFileURL(join(bundle.root,'launcher/src/browser-choice.mjs')));
 const base=await mkdtemp(resolve('.local/skills-model-')),home=join(base,'home'),game=join(base,'game'),fixture=join(base,'fixture');
+await copyTestSkills(bundle,seed,home);
 await mkdir(game);await mkdir(join(fixture,'game-author'),{recursive:true});
 await writeFile(join(fixture,'game-author/SKILL.md'),'---\nname: game-author\ndescription: Synthetic updated skill\n---\nSynthetic update fixture.');
 const archive=join(base,'skills.zip'),quote=s=>"'"+s.replaceAll("'","''")+"'";
@@ -63,8 +66,7 @@ try{
  while(Date.now()<deadline){
   const database=new DatabaseSync(join(home,'data/share/opencode/opencode.db'),{readOnly:true});
   try{
-   const row=database.prepare('SELECT data FROM session_message WHERE session_id=? AND type=? ORDER BY seq DESC LIMIT 1').get(session.id,'assistant');
-   const message=row?JSON.parse(row.data):null;
+   const message=lastAssistantMessage(database,session.id);
    if(fixtureFailure)throw fixtureFailure;
    if(message?.error)throw Error('Model failed: '+message.error.type+' / '+message.error.message);
    if(message?.time?.completed&&message.content?.some(c=>c.type==='text')&&!message.content.some(c=>c.type==='tool')){final=message.content.filter(c=>c.type==='text').map(c=>c.text).join('\n');break;}

@@ -12,7 +12,7 @@ try {
   [void][IO.Directory]::CreateDirectory((Join-Path $destination 'data'))
   [IO.File]::WriteAllText((Join-Path $destination 'data/chat'),'preserved chat and authorization fixture')
   [IO.File]::WriteAllText((Join-Path $destination 'preferences.json'),'{"browser":"yandex","game":"synthetic"}')
-  $channel=[IO.File]::ReadAllText((Join-Path $destination 'channel.json'))
+  $channel=Get-Content -Raw -LiteralPath (Join-Path $destination 'channel.json') | ConvertFrom-Json
   # 0.0.1 registered only UninstallString, without InstallLocation.
   Remove-ItemProperty -LiteralPath $key -Name InstallLocation -ErrorAction SilentlyContinue
   & (Join-Path $PackageHome 'Install.ps1') -RegistrationName $registration -NonInteractive
@@ -24,7 +24,9 @@ try {
     & (Join-Path $PackageHome 'Install.ps1') -RegistrationName $registration -NonInteractive
     if ([IO.File]::ReadAllText((Join-Path $destination 'data/chat')) -ne 'preserved chat and authorization fixture') { throw 'User data changed' }
     if ([IO.File]::ReadAllText((Join-Path $destination 'preferences.json')) -ne '{"browser":"yandex","game":"synthetic"}') { throw 'Preferences changed' }
-    if ([IO.File]::ReadAllText((Join-Path $destination 'channel.json')) -ne $channel) { throw 'Channel changed' }
+    $currentChannel=Get-Content -Raw -LiteralPath (Join-Path $destination 'channel.json') | ConvertFrom-Json
+    if ($currentChannel.publicKey -ne $channel.publicKey -or $currentChannel.assetsUrl -ne $channel.assetsUrl) { throw 'Trusted channel changed' }
+    if ($currentChannel.manifestUrl -ne $channel.manifestUrl) { throw 'Installed manifest URL changed' }
   }
   if (!(Test-Path -LiteralPath (Join-Path $destination ('backups/'+$backup+'/data/chat')))) { throw 'Backup missing' }
   if ((Get-ItemProperty -LiteralPath $key).InstallLocation -ne $destination) { throw 'Installation path not registered' }

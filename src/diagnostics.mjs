@@ -1,7 +1,7 @@
 import {mkdir,readdir,stat,unlink,appendFile,readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {atomicJson} from './storage.mjs';
-const stages=new Set(['verify','browser','workspace','account','opencode','mcp','ready','stopped','error']);
+const stages=new Set(['verify','skills','browser','workspace','account','opencode','mcp','ready','stopped','error']);
 const categories=new Set(['network','browser','authorization','model','bundle','startup']);
 export function classify(error){
   const message=String(error?.message??'');
@@ -21,6 +21,16 @@ export function safeEvent(event,{preserveTime=false}={}){
   if(['auto','chrome','msedge','yandex','chromium','firefox'].includes(event.browser))value.browser=event.browser;
   if(event.mcp)value.mcp=Object.fromEntries(['encounter','author_tools','browser'].map(name=>[name,['connected','pending','failed','disabled','needs_auth'].includes(event.mcp[name])?event.mcp[name]:'pending']));
   if(['checking','staged','current','failed'].includes(event.update))value.update=event.update;
+  for(const key of ['app','skills']){
+    const item=event[key];
+    if(!item||!['checking','staged','current','updated','failed','cancelled','unconfigured'].includes(item.status))continue;
+    value[key]={status:item.status};
+    if(categories.has(item.category))value[key].category=item.category;
+    for(const field of ['version','id','previousVersion']){
+      if(/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/.test(item[field]??''))value[key][field]=item[field];
+    }
+  }
+  if(/^\d+\.\d+\.\d+$/.test(event.loadedSkills??''))value.loadedSkills=event.loadedSkills;
   return value;
 }
 export async function report(home,event){

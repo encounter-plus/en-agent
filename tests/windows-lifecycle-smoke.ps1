@@ -3,6 +3,8 @@ $ErrorActionPreference='Stop'
 $HomeDirectory=[IO.Path]::GetFullPath($HomeDirectory)
 if ($HomeDirectory -notlike '*\.local\*') { throw 'Use a disposable .local installation' }
 $exe=Join-Path $HomeDirectory 'en-agent.exe'
+$previousNoBrowser=$env:EN_AGENT_NO_BROWSER
+$env:EN_AGENT_NO_BROWSER='1'
 $statusPath=Join-Path $HomeDirectory 'status.json'
 $lockPath=Join-Path $HomeDirectory 'launcher.lock\owner.json'
 function Wait-Condition([scriptblock]$Condition,[int]$Seconds=45) {
@@ -53,6 +55,15 @@ try {
   if (!$retry.Current.NativeWindowHandle) { throw 'Retry native button handle missing' }
   [void][EnSmokeClick]::SendMessage([IntPtr]$retry.Current.NativeWindowHandle,0xF5,[IntPtr]::Zero,[IntPtr]::Zero)
   Wait-Condition { (Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json).stage -eq 'ready' }
+  Wait-Condition { $s=Get-Content -Raw -LiteralPath $statusPath | ConvertFrom-Json; $s.skills.status -and $s.skills.status -ne 'checking' -and $s.app.status -ne 'checking' }
+  $before=(Get-Content -Raw -LiteralPath $statusPath | ConvertFrom-Json).time
+  $check=$window.FindFirst([Windows.Automation.TreeScope]::Descendants,(New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty,'Проверить обновления')))
+  if (!$check.Current.NativeWindowHandle) { throw 'Update button missing' }
+  [void][EnSmokeClick]::SendMessage([IntPtr]$check.Current.NativeWindowHandle,0xF5,[IntPtr]::Zero,[IntPtr]::Zero)
+  Wait-Condition {
+    $s=Get-Content -Raw -LiteralPath $statusPath | ConvertFrom-Json
+    $s.time -gt $before -and $s.skills.status -eq 'current' -and $s.app.status -and $s.app.status -ne 'checking'
+  }
   $owner=Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
   # Abrupt GUI death: child supervisor must stop OpenCode and release the lock.
   Stop-Process -Id $gui.ProcessId -Force
@@ -69,6 +80,7 @@ try {
   Wait-Condition { !(Test-Path -LiteralPath $lockPath) }
   Write-Output 'PASS: native EXE, three rapid duplicates, managed Edge restart, OpenCode crash, Support export and Retry buttons, GUI crash cleanup, Node crash recovery, normal shutdown'
 } finally {
+  $env:EN_AGENT_NO_BROWSER=$previousNoBrowser
   if ($wrapper -and !$wrapper.HasExited) {
     [IO.File]::WriteAllText((Join-Path $HomeDirectory 'stop.request'),'stop')
     [void]$wrapper.WaitForExit(10000)

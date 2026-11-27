@@ -1,5 +1,5 @@
 // Developer-only seed from already installed binaries; never marks a release approved.
-import {readdir,mkdir,cp,readFile,stat,chmod} from 'node:fs/promises';
+import {readdir,mkdir,cp,readFile,chmod} from 'node:fs/promises';
 import {join,resolve,relative} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
@@ -22,7 +22,11 @@ const project=fileURLToPath(new URL('../',import.meta.url));
 const exe=process.platform==='win32'?'.exe':'';
 await mkdir(join(root,'bin'),{recursive:true});
 await cp(binary,join(root,'bin','opencode'+exe));await cp(process.execPath,join(root,'bin','node'+exe));
-await cp(join(skills,'dist','skills'),join(root,'skills'),{recursive:true});
+const workspaceFiles = join(root,'launcher','workspace');
+await mkdir(workspaceFiles,{recursive:true});
+for(const file of ['init-workspace.mjs','workspace-template.json']){
+  await cp(join(skills,'skills','game-author','scripts',file),join(workspaceFiles,file));
+}
 await cp(join(skills,'runtime','dist'),join(root,'runtime','dist'),{recursive:true});
 await mkdir(join(root,'runtime','scripts'),{recursive:true});
 await cp(join(skills,'runtime','scripts','windows-credential.ps1'),join(root,'runtime','scripts','windows-credential.ps1'));
@@ -36,7 +40,9 @@ await cp(join(project,'en-agent.vbs'),join(root,'launcher','en-agent.vbs'));
 for(const name of ['Install.ps1','Uninstall.ps1'])await cp(join(project,name),join(root,'launcher',name));
 await cp(join(project,'windows'),join(root,'launcher','windows'),{recursive:true});
 await cp(join(project,'dist','en-agent.exe'),join(root,'launcher','en-agent.exe'));
-for(const name of ['@playwright/mcp','playwright','playwright-core'])await cp(join(project,'node_modules',name),join(root,'browser','node_modules',name),{recursive:true});
+for(const name of ['@playwright/mcp','playwright','playwright-core'])await cp(join(project,'node_modules',name),join(root,'browser','node_modules',name),{
+  recursive:true,filter:path=>relative(join(project,'node_modules',name),path).replaceAll('\\','/')!=='lib/tools/skills'
+});
 if(process.platform!=='win32'){await chmod(join(root,'bin','opencode'),0o755);await chmod(join(root,'bin','node'),0o755);}
 
 const files=[];
@@ -45,7 +51,7 @@ async function walk(dir){for(const entry of await readdir(dir,{withFileTypes:tru
   if(entry.isDirectory())await walk(p);else {const bytes=await readFile(p);files.push({path:relative(root,p).replaceAll('\\','/'),size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),executable:p.includes(join(root,'bin'))});}
 }}
 await walk(root);
-const m={schemaVersion:1,bootstrapProtocol:1,id,sequence:Number(values.sequence??10),platform:process.platform,arch:process.arch,storageEpoch:2,opencode:{version,configVersion:2,path:'bin/opencode'+exe},nodePath:'bin/node'+exe,skillsVersion:JSON.parse(await readFile(join(skills,'package.json'))).version,mcpVersion:JSON.parse(await readFile(join(skills,'runtime/package.json'))).version,skillsPath:'skills',mcpPath:'runtime/dist/server.mjs',toolsPath:'runtime/tools-server.mjs',browserPath:'browser/node_modules/@playwright/mcp/cli.js',launcherPath:'launcher/src/cli.mjs',files};
+const m={schemaVersion:2,bootstrapProtocol:1,id,sequence:Number(values.sequence??10),platform:process.platform,arch:process.arch,storageEpoch:2,opencode:{version,configVersion:2,path:'bin/opencode'+exe},nodePath:'bin/node'+exe,minimumSkillsVersion:'0.1.0',mcpVersion:JSON.parse(await readFile(join(skills,'runtime/package.json'))).version,mcpPath:'runtime/dist/server.mjs',toolsPath:'runtime/tools-server.mjs',browserPath:'browser/node_modules/@playwright/mcp/cli.js',launcherPath:'launcher/src/cli.mjs',files};
 m.accountPath='runtime/account-service.mjs';m.accountProxyPath='runtime/account-proxy.mjs';
 await verifyBundle(root,m);await atomicJson(join(root,'release.json'),m);await atomicJson(join(home,'state.json'),{current:id,highestSequence:m.sequence,probation:false});
 await cp(join(project,'Launch.ps1'),join(home,'Launch.ps1'));

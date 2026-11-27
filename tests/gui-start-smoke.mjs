@@ -1,3 +1,4 @@
+import {copyTestSkills} from './copied-skills.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
@@ -12,6 +13,7 @@ const source=resolve(process.argv[2]);
 const home=await mkdtemp(resolve('.local/gui-start-'));
 const workspace=join(home,'Игра & первый старт');await mkdir(workspace);
 const bundle=await installed(source,(await json(join(source,'state.json'))).current);
+await copyTestSkills(bundle,source,home);
 let runtime,gui,browser;
 try {
   runtime=await startOpenCode(bundle,home,workspace,{browserChoice:chooseBrowser(await detectBrowsers(bundle.root))});

@@ -1,4 +1,6 @@
 // Opt-in real-model evaluation. No production MCP, credentials, browser, shell or web tools.
+import {lastAssistantMessage} from './model-message.mjs';
+import {copyTestSkills} from './copied-skills.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile,readFile,cp,copyFile,readdir} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
@@ -22,12 +24,12 @@ const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 async function fingerprints(directory){const result={};async function walk(p){for(const e of await readdir(p,{withFileTypes:true})){const file=join(p,e.name);if(e.isDirectory())await walk(file);else if(e.isFile())result[file]=hash(await readFile(file));else throw Error('Unexpected link');}}await walk(directory);return result;}
 const preferences=installedMode?await json(join(home,'preferences.json')):null;
 const preserved=installedMode?{game:await fingerprints(preferences.game),data:await fingerprints(join(home,'data')),preferences:hash(await readFile(join(home,'preferences.json'))),state:hash(await readFile(join(home,'state.json')))}:null;
+const sourceSkills=await copyTestSkills(bundle,home,join(base,'state'));
 if(!installedMode){
 await mkdir(root);
 await copyFile(join(bundle.root,bundle.manifest.nodePath),join(root,'node.exe'));
 await copyFile(join(bundle.root,bundle.manifest.opencode.path),join(root,'opencode.exe'));
-// Match the skill files to the integrity manifest of the selected bundle.
-await cp(join(bundle.root,bundle.manifest.skillsPath),join(root,'skills'),{recursive:true});
+
 await mkdir(join(root,'launcher/src'),{recursive:true});
 await copyFile(resolve('src/agent-instructions.md'),join(root,'launcher/src/agent-instructions.md'));
 await mkdir(join(root,'runtime/scripts'),{recursive:true});
@@ -35,10 +37,11 @@ await copyFile(join(bundle.root,'runtime/scripts/windows-credential.ps1'),join(r
 await build({entryPoints:[resolve('../en-skills/runtime/tests/import-model-server.ts')],outfile:join(root,'fixture.mjs'),bundle:true,platform:'node',format:'esm',target:'node24'});
 // startOpenCode's managed command invokes this wrapper with the fixture's sole local output root.
 await writeFile(join(root,'mcp.mjs'),`process.argv[2]=${JSON.stringify(evidence)};await import('./fixture.mjs');`);
-manifest={...bundle.manifest,nodePath:'node.exe',skillsPath:'skills',mcpPath:'mcp.mjs',opencode:{...bundle.manifest.opencode,path:'opencode.exe'}};
+manifest={...bundle.manifest,nodePath:'node.exe',mcpPath:'mcp.mjs',opencode:{...bundle.manifest.opencode,path:'opencode.exe'}};
 delete manifest.accountProxyPath;delete manifest.toolsPath;delete manifest.browserPath;
 }else{
  const isolatedHome=join(base,'launcher-home');
+ await copyTestSkills(bundle,home,isolatedHome);
  await cp(bundle.root,join(isolatedHome,'releases',manifest.id),{recursive:true});
  await writeFile(join(isolatedHome,'state.json'),JSON.stringify({current:manifest.id,highestSequence:manifest.sequence,probation:false}));
  const smokeArgs=[join(bundle.root,manifest.launcherPath),'--home',isolatedHome,'--game',work,'--name','Synthetic installed import','--no-browser','--smoke'];
@@ -70,17 +73,17 @@ if(process.argv[1]&&pathToFileURL(process.argv[1]).href===target){
  accountEnvironment={NODE_OPTIONS:'--import='+pathToFileURL(preload).href};
  await writeFile(join(base,'installed-provenance.json'),JSON.stringify({home,release:manifest.id,root,server:manifest.mcpPath,serverSha256:hash(await readFile(join(root,manifest.mcpPath))),launcher:manifest.launcherPath,installedTools:true,testBoundary:'Only PlanHost dependency and tracing are injected in memory; installed handlers, schemas, journal and instructions unchanged. Synthetic table and engine, real external model. Production runtime network blocked.'},null,2));
 }
-const template=JSON.parse(await readFile(join(root,'skills/game-author/scripts/workspace-template.json'),'utf8'));
+const template=JSON.parse(await readFile(join(sourceSkills.directory,'game-author/scripts/workspace-template.json'),'utf8'));
 await writeFile(join(work,'AGENTS.md'),template.files['AGENTS.md']+'\nUse game-import. This is a synthetic test. Use only the supplied synthetic MCP for table and game operations. Never access a real game.');
 for(const name of ['GAME.md','decisions.md','tasks.md'])await writeFile(join(work,name),template.files[name].replaceAll('{{GAME_NAME}}','Synthetic'));
 const config=join(base,'config.json');
-const selectedSkills=await prepareSkills({root,manifest},join(base,'state'));
+const selectedSkills=await prepareSkills(bundle,join(base,'state'));
 const permissions=[{action:'*',resource:'*',effect:'deny'},{action:'skill',resource:'game-import',effect:'allow'},...['read','external_directory'].map(action=>({action,resource:selectedSkills.directory.replaceAll('\\','/')+'/*',effect:'allow'})),...['GAME.md','decisions.md','tasks.md'].flatMap(resource=>[{action:'read',resource,effect:'allow'},{action:'edit',resource,effect:'allow'}]),{action:'encounter_*',resource:'*',effect:'allow'}];
 await writeFile(config,JSON.stringify({permissions}));
 const previous=process.env.OPENCODE_CONFIG;process.env.OPENCODE_CONFIG=config;
 let runtime;
 try{
- runtime=await startOpenCode({root,manifest},join(base,'state'),work,{accountEnvironment,browserChoice});
+ runtime=await startOpenCode({root,manifest},join(base,'state'),work,{accountEnvironment,browserChoice,selectedSkills});
  await waitForMcp(runtime,work,installedMode?['encounter','author_tools','browser']:['encounter']);
  if(process.argv.includes('--preflight-only')){
   assert.ok(permissions.some(p=>p.action==='read'&&p.resource===selectedSkills.directory.replaceAll('\\','/')+'/*'));
@@ -95,7 +98,7 @@ try{
   try{traces=(await readFile(join(evidence,'trace.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);}catch{}
   if(traces.some(t=>t.name==='encounter_verify_import_plan'&&JSON.stringify(t.result).includes('complete'))){
    const db=new DatabaseSync(join(base,'state/data/share/opencode/opencode.db'),{readOnly:true});
-   try{const row=db.prepare('SELECT data FROM session_message WHERE session_id=? AND type=? ORDER BY seq DESC LIMIT 1').get(session.id,'assistant');const message=row?JSON.parse(row.data):null;
+   try{const message=lastAssistantMessage(db,session.id);
     if(message?.time?.completed&&message.content?.some(c=>c.type==='text')&&!message.content.some(c=>c.type==='tool')){finished=true;await writeFile(join(base,'final-message.json'),JSON.stringify(message.content.filter(c=>c.type==='text'),null,2));break;}
    }finally{db.close();}
   }

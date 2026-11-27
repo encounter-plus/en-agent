@@ -38,6 +38,48 @@ function Read-LauncherLog([string]$Path) {
     try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
   } catch [IO.IOException] { return '' }
 }
+function Get-LauncherStatusText($Status) {
+  $lines = @('Этап: ' + $Status.stage + ' | Комплект: ' + $Status.version)
+  if ($Status.mcp) {
+    $lines += ($Status.mcp.PSObject.Properties | ForEach-Object { $_.Name + ': ' + $_.Value }) -join '  '
+  }
+  $labels = @{checking='проверяем…';current='актуально';staged='подготовлено к следующему запуску';updated='установлены';failed='проверка не удалась';unconfigured='канал не настроен';cancelled='проверка прервана'}
+  if ($Status.app) {
+    $line = ('Приложение ' + $Status.version + ' — ' + $labels[$Status.app.status] + ' ' + $Status.app.id).TrimEnd()
+    if ($Status.app.status -eq 'failed') { $line = 'Ошибка: ' + $line }
+    $lines += $line
+  }
+  if ($Status.skills) {
+    $version = if ($Status.skills.version) { $Status.skills.version } else { $Status.loadedSkills }
+    $line = 'Скиллы ' + $version + ' — ' + $labels[$Status.skills.status]
+    if ($Status.skills.status -eq 'failed') {
+      $line = 'Ошибка: ' + $line
+      if ($Status.skills.category -eq 'bundle') { $line += ' (проверка пакета)' }
+      if (!$Status.loadedSkills) { $line += '. Для запуска нужны скиллы. Проверьте сеть и нажмите «Проверить обновления».' }
+    }
+    if ($Status.loadedSkills -and $Status.skills.version -and $Status.loadedSkills -ne $Status.skills.version) { $line += '. Нужен перезапуск' }
+    $lines += $line
+  }
+  if ($Status.stage -eq 'error') {
+    $detail = if ($Status.category) { 'Не удалось продолжить работу. Категория: ' + $Status.category } else { 'Не удалось продолжить работу.' }
+    $lines += 'Ошибка: ' + $detail
+  }
+  return $lines -join "`n"
+}
+
+function Set-LauncherStatusText($View, [string]$Text) {
+  $Text = $Text.Replace("`r`n", "`n")
+  if ($View.Text -ceq $Text) { return }
+  $View.Text = $Text
+  $View.SelectAll()
+  $View.SelectionColor = $View.ForeColor
+  foreach ($prefix in [regex]::Matches($Text, '(?m)^Ошибка(?=:)')) {
+    $View.Select($prefix.Index, $prefix.Length)
+    $View.SelectionColor = [Drawing.Color]::Firebrick
+  }
+  $View.Select(0, 0)
+}
+
 function Write-LauncherPreferences($Value) {
   $temporary=$preferences+'.'+[guid]::NewGuid().ToString('N')+'.tmp'
   [IO.File]::WriteAllText($temporary,($Value | ConvertTo-Json),(New-Object Text.UTF8Encoding $false))
@@ -134,6 +176,20 @@ try {
   $settings = @{}
   $launchStage = 'Чтение настроек'
   if (Test-Path -LiteralPath $preferences) { $existing = Get-Content -LiteralPath $preferences -Raw | ConvertFrom-Json; foreach ($property in $existing.PSObject.Properties) { $settings[$property.Name] = $property.Value } }
+  $request = Join-Path $HomeDirectory ('launch-' + [guid]::NewGuid() + '.json')
+  $outFile = Join-Path $HomeDirectory 'launcher-output.log'
+  $errFile = Join-Path $HomeDirectory 'launcher-error.log'
+  $requestOption = if ($manifest.minimumSkillsVersion) { '--wait-request' } else { '--request' }
+  $arguments = '"' + $cli + '" --home "' + $HomeDirectory + '" ' + $requestOption + ' "' + $request + '" --parent-pid ' + $PID + ' --parent-birth ' + (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks
+  if ($env:EN_AGENT_NO_BROWSER -eq '1') { $arguments += ' --no-browser' }
+  function Start-LauncherWorker {
+    $script:workerStartedUtc = [DateTime]::UtcNow
+    Start-Process -FilePath $node -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+  }
+  if ($manifest.minimumSkillsVersion) {
+    $process = Start-LauncherWorker
+    $null = $process.Handle
+  }
   if (!$ResumeLastGame) {
     $launchStage = 'Выбор браузера'
     $browserForm = New-Object System.Windows.Forms.Form
@@ -165,21 +221,20 @@ try {
     if ([string]::IsNullOrWhiteSpace($name)) { return }
   }
   $launchStage = 'Сохранение запроса запуска'
-  $request = Join-Path $HomeDirectory 'launch-request.json'
-  [IO.File]::WriteAllText($request, (@{game=$game;name=$name} | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))
-  $outFile = Join-Path $HomeDirectory 'launcher-output.log'
-  $errFile = Join-Path $HomeDirectory 'launcher-error.log'
-  # These arguments are Windows file paths; quotes cannot occur in path components.
-  $arguments = '"' + $cli + '" --home "' + $HomeDirectory + '" --request "' + $request + '" --parent-pid ' + $PID + ' --parent-birth ' + (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks
+  [IO.File]::WriteAllText(($request + '.tmp'), (@{game=$game;name=$name} | ConvertTo-Json), (New-Object Text.UTF8Encoding $false))
+  [IO.File]::Move(($request + '.tmp'), $request)
   $launchStage = 'Запуск процесса комплекта'
-  $process = Start-Process -FilePath $node -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+  if (!$process) { $process = Start-LauncherWorker }
   $null = $process.Handle
   $launchStage = 'Работа окна launcher'
   $form = New-Object System.Windows.Forms.Form
   $form.Add_Shown({ [void][EnAgentLauncherWindow]::ShowWindow($form.Handle,5); $form.Activate() })
   $form.Text = 'en-agent'; $form.Width = 580; $form.Height = 390
   $form.StartPosition = 'CenterScreen'
-  $label = New-Object System.Windows.Forms.Label
+  $label = New-Object System.Windows.Forms.RichTextBox
+  $label.ReadOnly = $true; $label.TabStop = $false; $label.DetectUrls = $false
+  $label.BorderStyle = 'None'; $label.BackColor = $form.BackColor; $label.Font = $form.Font
+  $label.ScrollBars = 'Vertical'
   $label.Left = 16; $label.Top = 16; $label.Width = 530; $label.Height = 110
   $label.Text = 'Запускается OpenCode. Готовый интерфейс откроется в браузере.'
   $form.Controls.Add($label)
@@ -195,6 +250,14 @@ try {
     . (Join-Path $bundle 'launcher/src/Exa.ps1')
     Show-EnAgentExa $form $node $bundle $HomeDirectory
   })
+  $updateButton = New-Object System.Windows.Forms.Button
+  $updateButton.Text = 'Проверить обновления'
+  $updateButton.SetBounds(215,270,190,32)
+  $form.Controls.Add($updateButton)
+  $updateButton.Add_Click({
+    if ($process.HasExited) { $retry.PerformClick(); return }
+    [IO.File]::WriteAllText((Join-Path $HomeDirectory 'updates.request'),'check')
+  })
   $settingsButton = New-Object System.Windows.Forms.Button
   $settingsButton.Text = 'Настройки'; $settingsButton.SetBounds(16,180,180,32); $form.Controls.Add($settingsButton)
   $settingsButton.Add_Click({
@@ -204,7 +267,7 @@ try {
     $dialog = New-Object System.Windows.Forms.Form; $dialog.Text = 'Общие настройки'; $dialog.SetBounds(0,0,520,230); $dialog.StartPosition = 'CenterParent'
     $info = New-Object System.Windows.Forms.Label; $info.SetBounds(16,16,475,55)
     $info.Text = 'Комплект: ' + $active.current + '. Подготовлено обновление: ' + $active.pending
-    if (Test-Path (Join-Path $HomeDirectory 'status.json')) { $currentStatus = Get-Content (Join-Path $HomeDirectory 'status.json') -Raw | ConvertFrom-Json; $info.Text += "`r`nБраузер: " + $currentStatus.browser + '. Обновление: ' + $currentStatus.update }
+    if (Test-Path (Join-Path $HomeDirectory 'status.json')) { $currentStatus = Get-Content (Join-Path $HomeDirectory 'status.json') -Raw | ConvertFrom-Json; $info.Text += "`r`nБраузер: " + $currentStatus.browser }
     $dialog.Controls.Add($info)
     $select = New-Object System.Windows.Forms.ComboBox; $select.DropDownStyle='DropDownList'; $select.SetBounds(16,80,475,30)
     $choices = @('auto') + @($available | ForEach-Object { $_.id }); [void]$select.Items.Add('Автоматически')
@@ -235,13 +298,14 @@ try {
   })
   $retry = New-Object System.Windows.Forms.Button; $retry.Text='Повторить запуск'; $retry.SetBounds(215,225,190,32); $retry.Enabled=$false; $form.Controls.Add($retry)
   $retry.Add_Click({
-    $script:process = Start-Process -FilePath $node -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+    $script:process = Start-LauncherWorker
     $null = $script:process.Handle
+    Set-LauncherStatusText $label 'Повторный запуск…'
     $retry.Enabled=$false; $stop.Enabled=$true; $timer.Start()
   })
 
   $accountButton.Add_Click({ [IO.File]::WriteAllText((Join-Path $HomeDirectory 'account.request'), 'open') })
-  $stop.Add_Click({ [IO.File]::WriteAllText((Join-Path $HomeDirectory 'stop.request'), 'stop'); $stop.Enabled = $false; $label.Text = 'Завершение работы…' })
+  $stop.Add_Click({ [IO.File]::WriteAllText((Join-Path $HomeDirectory 'stop.request'), 'stop'); $stop.Enabled = $false; Set-LauncherStatusText $label 'Завершение работы…' })
   $timer = New-Object System.Windows.Forms.Timer
   $timer.Interval = 500
   $timer.Add_Tick({
@@ -250,18 +314,24 @@ try {
       $activeManifest = Get-Content -LiteralPath (Join-Path $HomeDirectory ('releases\' + $activeState.current + '\release.json')) -Raw | ConvertFrom-Json
       $accountButton.Enabled = [bool]$activeManifest.accountPath
     }
-    if (Test-Path -LiteralPath (Join-Path $HomeDirectory 'status.json')) {
-      try { $status = Get-Content -LiteralPath (Join-Path $HomeDirectory 'status.json') -Raw | ConvertFrom-Json
-        $label.Text = 'Этап: ' + $status.stage + ' | Комплект: ' + $status.version + "`r`n"
-        if ($status.mcp) { foreach ($item in $status.mcp.PSObject.Properties) { $label.Text += $item.Name + ': ' + $item.Value + '  ' } }
-        $label.Text += "`r`nОшибка: " + $status.category
+    $statusPath = Join-Path $HomeDirectory 'status.json'
+    if ([IO.File]::GetLastWriteTimeUtc($statusPath) -ge $script:workerStartedUtc) {
+      try {
+        $status = Read-LauncherLog $statusPath | ConvertFrom-Json
+        if ($status) { Set-LauncherStatusText $label (Get-LauncherStatusText $status) }
       } catch {}
+    } else {
+      $text = Read-LauncherLog $outFile
+      if ($text) { Set-LauncherStatusText $label $text }
     }
-    if (!(Test-Path -LiteralPath (Join-Path $HomeDirectory 'status.json')) -and (Test-Path -LiteralPath $outFile)) { $text = (Read-LauncherLog $outFile); if ($text) { $label.Text = $text } }
     if ($process.HasExited) {
       $process.WaitForExit()
       $timer.Stop(); $stop.Enabled = $false; $retry.Enabled = $true
-      if ($process.ExitCode -ne 0) { $label.Text = (Read-LauncherLog $errFile) }
+      if ($process.ExitCode -ne 0) {
+        $detail = (Read-LauncherLog $errFile).Trim()
+        if (!$detail) { $detail = 'Процесс en-agent завершился с кодом ' + $process.ExitCode + '.' }
+        Set-LauncherStatusText $label ('Ошибка: ' + $detail)
+      }
       else { $form.Close() }
     }
   })
@@ -269,7 +339,7 @@ try {
     if (!$process.HasExited) {
       $_.Cancel = $true
       [IO.File]::WriteAllText((Join-Path $HomeDirectory 'stop.request'), 'stop')
-      $label.Text = 'Ожидание остановки OpenCode…'
+      Set-LauncherStatusText $label 'Ожидание остановки OpenCode…'
     }
   })
   $timer.Start(); [void]$form.ShowDialog(); $timer.Dispose()
@@ -282,6 +352,10 @@ try {
     } catch { [void][System.Windows.Forms.MessageBox]::Show(('Не удалось собрать журнал: ' + $_.Exception.Message),'Диагностика','OK','Error') }
   }
 } finally {
+  if ($process -and !$process.HasExited -and $request -and !(Test-Path -LiteralPath $request)) {
+    [IO.File]::WriteAllText((Join-Path $HomeDirectory 'stop.request'),'stop')
+  }
+  if ($request -and (Test-Path -LiteralPath $request)) { [IO.File]::Delete($request) }
   if ($focusTimer) { $focusTimer.Stop(); $focusTimer.Dispose() }
   if ($ownsLauncher) { [EnAgentLauncherWindow]::Owner.ReleaseMutex() }
   if ([EnAgentLauncherWindow]::Owner) { [EnAgentLauncherWindow]::Owner.Dispose() }

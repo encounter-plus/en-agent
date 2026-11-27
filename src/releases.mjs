@@ -12,12 +12,12 @@ async function withSkillsSnapshotLock(home,operation) {
 }
 
 export function validateManifest(m) {
-  if(m?.schemaVersion!==1||!/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/.test(m.id)||!Number.isSafeInteger(m.sequence)||m.sequence<1)throw new Error('Invalid release identity');
+  if(![1,2].includes(m?.schemaVersion)||!/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/.test(m.id)||!Number.isSafeInteger(m.sequence)||m.sequence<1)throw new Error('Invalid release identity');
   if(m.bootstrapProtocol!==undefined&&m.bootstrapProtocol!==1)throw new Error('Bootstrap installer upgrade required');
   if(m.platform!==process.platform||m.arch!==process.arch)throw new Error('Release platform mismatch');
   if(m.storageEpoch!==2)throw new Error('Storage migration requires a supported migration procedure');
   if(!/^2\.\d+\.\d+$/.test(m.opencode?.version)||m.opencode.configVersion!==2)throw new Error('Only tested OpenCode v2 configuration is supported');
-  if(typeof m.skillsVersion!=='string'||typeof m.mcpVersion!=='string'||!Array.isArray(m.files)||!m.files.length)throw new Error('Incomplete release');
+  if(typeof m.mcpVersion!=='string'||!Array.isArray(m.files)||!m.files.length)throw new Error('Incomplete release');
   const names=new Set();
   for(const f of m.files) {
     inside('.',f.path);
@@ -25,7 +25,16 @@ export function validateManifest(m) {
     if(f.asset!==undefined&&f.asset!==f.sha256)throw new Error('Release asset must use its content hash');
     names.add(f.path.toLowerCase());
   }
-  for(const p of [m.opencode.path,m.nodePath,m.skillsPath+'/game-author/SKILL.md',m.skillsPath+'/game-author/scripts/init-workspace.mjs',m.mcpPath]) {
+  const required=[m.opencode.path,m.nodePath,m.mcpPath];
+  if(m.schemaVersion===1){
+    if(typeof m.skillsVersion!=='string')throw Error('Missing bundled skills version');
+    required.push(m.skillsPath+'/game-author/SKILL.md',m.skillsPath+'/game-author/scripts/init-workspace.mjs');
+  }else{
+    if(!/^\d+\.\d+\.\d+$/.test(m.minimumSkillsVersion))throw Error('Missing minimum skills version');
+    required.push('launcher/workspace/init-workspace.mjs','launcher/workspace/workspace-template.json');
+    if(m.skillsPath || m.skillsVersion || m.files.some(f=>/(^|\/)SKILL\.md$/i.test(f.path)))throw Error('External skills must be downloaded separately');
+  }
+  for(const p of required) {
     inside('.',p);if(!m.files.some(f=>f.path===p))throw new Error('Missing release entry: '+p);
   }
   if(Boolean(m.accountPath)!==Boolean(m.accountProxyPath))throw new Error('Incomplete account integration');
@@ -80,6 +89,10 @@ export async function stageUpdate(home,channel,{fetcher=fetch,signal}={}) {
   const envelope=JSON.parse((await fetchBytes(channel.manifestUrl,1024*1024,fetcher,signal)).toString('utf8'));
   const m=signedManifest(envelope,channel.publicKey);
   const state=await optionalJson(join(home,'state.json'))??{};
+  if(state.pending){
+    const pending=await installed(home,state.pending);
+    if(m.sequence<=pending.manifest.sequence)return {status:'staged',id:state.pending};
+  }
   if(m.sequence<=(state.highestSequence??0)||m.id===state.current||m.id===state.pending||m.id===state.rejected||(state.rejectedVersions??[]).includes(m.id))return {status:'current'};
   const stage=join(home,'staging',randomUUID());await noLinks(stage);await mkdir(stage,{recursive:true});
   try {
@@ -94,10 +107,10 @@ export async function stageUpdate(home,channel,{fetcher=fetch,signal}={}) {
   await mkdir(join(home,'releases'),{recursive:true});
   const destination=join(home,'releases',m.id);
   try{await rename(stage,destination);}catch(e){if(!['EEXIST','ENOTEMPTY','EPERM'].includes(e.code))throw e;await verifyBundle(destination,m);}
-  await atomicJson(join(home,'state.json'),{...state,pending:m.id});
+  await changeState(home,latest=>({...latest,pending:m.id}));
   return {status:'staged',id:m.id};
   } catch(error){
-    if(/integrity|exceeds limit/.test(error.message))await atomicJson(join(home,'state.json'),{...state,rejectedVersions:[...new Set([...(state.rejectedVersions??[]),m.id])]});
+    if(/integrity|exceeds limit/.test(error.message))await changeState(home,latest=>({...latest,rejectedVersions:[...new Set([...(latest.rejectedVersions??[]),m.id])]}));
     throw error;
   } finally {await rm(stage,{recursive:true,force:true});}
 }
@@ -144,10 +157,16 @@ export async function activatePending(home) {
   return next;
 }
 
-export async function markHealthy(home) {
-  const path = join(home, 'state.json');
-  const state = await json(path);
-  await atomicJson(path, {...state, probation: false});
+// The launcher lock owns this installation. Startup and background staging may finish together.
+let stateWrites=Promise.resolve();
+function changeState(home,update){
+  const path=join(home,'state.json');
+  const write=stateWrites.then(async()=>atomicJson(path,update(await optionalJson(path)??{})));
+  stateWrites=write.catch(()=>{});
+  return write;
+}
+export function markHealthy(home) {
+  return changeState(home,state=>({...state,probation:false}));
 }
 
 export async function rejectCurrent(home) {
@@ -158,7 +177,7 @@ async function restorePrevious(home) {
   const path = join(home, 'state.json');
   const state = await json(path);
   if (!state.probation || !state.previous) throw Error('No previous release available');
-  await installed(home, state.previous);
+  await installed(home,state.previous);
   if (!/^before-[a-f0-9-]+$/.test(state.backup)) throw Error('Missing data backup');
   const data = join(home, 'data');
   await noLinks(data);

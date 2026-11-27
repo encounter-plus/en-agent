@@ -31,7 +31,7 @@ export async function extractSkillsArchive(archive,destination,bundleRoot,{signa
   await promisify(execFile)(systemPowerShell,['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',script,'-Archive',archive,'-Destination',destination],{windowsHide:true,timeout:60000,maxBuffer:1024*1024,signal});
 }
 
-export async function updateEnSkills(home,bundleRoot,{fetcher=fetch,extract=extractSkillsArchive,signal}={}) {
+export async function updateEnSkills(home,bundleRoot,{fetcher=fetch,extract=extractSkillsArchive,signal,minimum='0.0.0'}={}) {
   let work;
   try {
     return await updateSkills(home,async current=>{
@@ -39,7 +39,8 @@ export async function updateEnSkills(home,bundleRoot,{fetcher=fetch,extract=extr
       const version=release.tag_name?.replace(/^v/,'');
       compareSkillsVersions(version,version);
       if(release.draft!==false||release.prerelease!==false||!Array.isArray(release.assets))throw Error('A stable official skills release is required');
-      if(compareSkillsVersions(version,current)<=0)return null;
+      if(current && compareSkillsVersions(version,current)<=0)return null;
+      if(compareSkillsVersions(version,minimum)<0)throw Error('No compatible skills release available');
       const name='en-skills-'+version+'.zip',url=repository+'/releases/download/'+release.tag_name+'/'+name;
       const asset=release.assets.find(a=>a.name===name),checksum=release.assets.find(a=>a.name===name+'.sha256');
       if(!asset||!checksum||asset.browser_download_url!==url||checksum.browser_download_url!==url+'.sha256')throw Error('Official skills ZIP and checksum are required');
@@ -54,7 +55,7 @@ export async function updateEnSkills(home,bundleRoot,{fetcher=fetch,extract=extr
       work=await mkdtemp(join(staging,'download-'));const archive=join(work,'skills.zip'),directory=join(work,'skills');
       signal?.throwIfAborted();await writeFile(archive,bytes,{flag:'wx'});await extract(archive,directory,bundleRoot,{signal});
       return {version,directory,source:repository+'/releases/tag/'+release.tag_name};
-    },{signal});
+    },{signal,minimum});
   } finally {
     // An antivirus lock on disposable staging must not turn a committed update into a reported failure.
     if(work)await rm(work,{recursive:true,force:true}).catch(()=>{});

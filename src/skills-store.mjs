@@ -49,10 +49,11 @@ export async function inspectSkills(directory) {
   return files.sort((a,b)=>a.path.localeCompare(b.path,'en'));
 }
 
-async function selection(home,verify=true) {
+async function selection(home,verify=true,previous=false) {
   const store=skillsStoreRoot(home);await noLinks(store);
   await noLinks(join(store,'state.json'));
-  const state=await optionalJson(join(store,'state.json'));if(!state)return null;
+  let state=await optionalJson(join(store,'state.json'));if(!state)return null;
+  if(previous)state={...state,active:state.previous,previous:null};
   if(state.schemaVersion!==1||!state.active||! /^[a-f0-9-]{36}$/.test(state.active.generation))throw Error('Invalid skills state');
   compareSkillsVersions(state.active.version,state.active.version);
   const directory=inside(store,'generations/'+state.active.generation+'/skills');
@@ -79,6 +80,9 @@ async function publish(home,source,version,origin,state,appliedBundle,guard,sign
 }
 
 export async function prepareSkills(bundle,home) {
+  if(bundle.manifest.minimumSkillsVersion){
+    return localSkills(home,bundle.manifest.minimumSkillsVersion);
+  }
   const store=skillsStoreRoot(home),guard=await lockSkills(store,{waitMs:10000});
   try {
     const current=await selection(home,false),m=bundle.manifest;
@@ -96,21 +100,46 @@ export async function prepareSkills(bundle,home) {
   } finally {await guard.release();}
 }
 
+// Published generations are immutable. Reading a healthy one never waits for a network writer.
+export async function localSkills(home,minimum){
+  const compatible=current=>current && compareSkillsVersions(current.version,minimum)>=0 ? current : null;
+  try{return compatible(await selection(home));}
+  catch{
+    const guard=await lockSkills(skillsStoreRoot(home),{waitMs:10000});
+    try{return compatible(await recoverSkills(home,guard));}
+    finally{await guard.release();}
+  }
+}
+
+async function recoverSkills(home,guard){
+  try{return await selection(home);}
+  catch{
+    let previous;
+    try{previous=await selection(home,true,true);}catch{return null;}
+    if(previous)await guard.commit(previous.state);
+    return previous;
+  }
+}
+
 export async function skillsStatus(home,loadedDirectory) {
   const current=await selection(home);if(!current)throw Error('Skills store is not initialized');
   return {version:current.version,source:current.state.active.source,restartRequired:Boolean(loadedDirectory&&resolve(loadedDirectory)!==current.directory)};
 }
 
 // The callback prepares a validated candidate while the store lock serializes all writers.
-export async function updateSkills(home,prepare,{signal}={}) {
+export async function updateSkills(home,prepare,{signal,minimum='0.0.0'}={}) {
   const guard=await lockSkills(skillsStoreRoot(home),{signal});
   try {
-    const current=await selection(home);if(!current)throw Error('Skills store is not initialized');
-    const candidate=await prepare(current.version);
+    const current=await recoverSkills(home,guard);
+    const candidate=await prepare(current?.version??null);
     signal?.throwIfAborted();
-    if(!candidate)return {status:'current',version:current.version};
-    if(compareSkillsVersions(candidate.version,current.version)<=0)return {status:'current',version:current.version};
-    const next=await publish(home,candidate.directory,candidate.version,candidate.source,current.state,current.state.appliedBundle,guard,signal);
-    return {status:'updated',previousVersion:current.version,version:next.version,restartRequired:true};
+    if(!candidate){
+      if(!current || compareSkillsVersions(current.version,minimum)<0)throw Error('No compatible skills release available');
+      return {status:'current',version:current.version};
+    }
+    if(compareSkillsVersions(candidate.version,minimum)<0)throw Error('No compatible skills release available');
+    if(current && compareSkillsVersions(candidate.version,current.version)<=0)return {status:'current',version:current.version};
+    const next=await publish(home,candidate.directory,candidate.version,candidate.source,current?.state,current?.state.appliedBundle??null,guard,signal);
+    return {status:'updated',previousVersion:current?.version??null,version:next.version,restartRequired:true};
   } finally {await guard.release();}
 }

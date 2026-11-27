@@ -16,7 +16,7 @@ const language=z.enum(['ru','en']),short=z.string().trim().min(1).max(300);
 if(process.env.EN_AGENT_HOME&&process.env.EN_AGENT_BUNDLE_ROOT){
   tool('en_skills_status','Show the installed en-skills version and whether en-agent needs a restart.',{},()=>skillsStatus(process.env.EN_AGENT_HOME,process.env.EN_AGENT_SKILLS_ACTIVE));
   tool('en_skills_update','Update en-skills from its official stable GitHub release after the user asks to update skills. Verifies checksum and package, preserves current skills on failure, never downgrades or changes program files. Restart en-agent after a successful update.',{},async()=>{
-    const result=await updateEnSkills(process.env.EN_AGENT_HOME,process.env.EN_AGENT_BUNDLE_ROOT,{signal:shutdown.signal});
+    const result=await updateEnSkills(process.env.EN_AGENT_HOME,process.env.EN_AGENT_BUNDLE_ROOT,{signal:shutdown.signal,minimum:process.env.EN_AGENT_SKILLS_MINIMUM});
     const status=await skillsStatus(process.env.EN_AGENT_HOME,process.env.EN_AGENT_SKILLS_ACTIVE);
     return {...result,restartRequired:status.restartRequired};
   });

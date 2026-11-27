@@ -1,6 +1,7 @@
 import {readFile,writeFile,mkdir,rename,lstat,rm,rmdir,open} from 'node:fs/promises';
 import {installationId,processIdentity} from './process-identity.mjs';
 import {resolve,dirname,join,relative,isAbsolute} from 'node:path';
+import {setTimeout as delay} from 'node:timers/promises';
 import {randomUUID} from 'node:crypto';
 
 export async function json(path) {return JSON.parse(await readFile(path,'utf8'));}
@@ -21,7 +22,16 @@ export async function atomicJson(path,value) {
   await noLinks(path);await mkdir(dirname(path),{recursive:true});
   const temporary=path+'.'+randomUUID()+'.tmp';
   await writeFile(temporary,JSON.stringify(value,null,2)+'\n',{flag:'wx',mode:0o600});
-  await rename(temporary,path);
+  try{
+    // Windows readers (including the launcher UI) may briefly deny replacement.
+    for(let attempt=0;;attempt++){
+      try{await rename(temporary,path);break;}
+      catch(error){
+        if(process.platform!=='win32'||!['EPERM','EACCES','EBUSY'].includes(error.code)||attempt>=8)throw error;
+        await delay(15*(attempt+1));
+      }
+    }
+  }finally{await rm(temporary,{force:true});}
 }
 export async function lock(home) {
   await noLinks(home);await mkdir(home,{recursive:true});

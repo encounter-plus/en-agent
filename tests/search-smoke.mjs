@@ -1,4 +1,5 @@
 // Public network check of OpenCode's own Exa adapter, with no personal key.
+import {copyTestSkills} from './copied-skills.mjs';
 import assert from 'node:assert/strict';
 import {mkdir} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
@@ -9,6 +10,7 @@ const home=resolve(process.argv[2]??'.local/exa-ready');
 const workspace=resolve('.local/exa-network-check');await mkdir(workspace,{recursive:true});
 delete process.env.EXA_API_KEY;
 const bundle=await installed(home,(await json(join(home,'state.json'))).current);
+await copyTestSkills(bundle,home,join(workspace,'state'));
 const runtime=await startOpenCode(bundle,join(workspace,'state'),workspace);
 try{
   await waitForMcp(runtime,workspace,['encounter','author_tools','browser']);

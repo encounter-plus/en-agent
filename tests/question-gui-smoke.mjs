@@ -1,4 +1,5 @@
 // Real OpenCode question tool and GUI with a deterministic local model; no paid inference.
+import {copyTestSkills} from './copied-skills.mjs';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {mkdir,writeFile} from 'node:fs/promises';
@@ -30,6 +31,7 @@ await writeFile(config,JSON.stringify({providers:{fixture:{name:'Local GUI test'
 const previous=process.env.OPENCODE_CONFIG;process.env.OPENCODE_CONFIG=config;
 try {
   const bundle=await installed(home,(await json(join(home,'state.json'))).current);
+  await copyTestSkills(bundle,home,join(work,'state'));
   runtime=await startOpenCode(bundle,join(work,'state'),work);
   const post=async(path,body)=>{const response=await runtime.request(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const text=await response.text();assert.ok(response.ok,`${path}: ${response.status} ${text}`);return text?JSON.parse(text):null;};
   const title='en-agent question GUI check '+Date.now();

@@ -1,7 +1,8 @@
 // Real OpenCode, synthetic local model and games; no external MCP or paid inference.
+import {copyTestSkills} from './copied-skills.mjs';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {mkdtemp,mkdir,writeFile,readFile,cp,copyFile} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,copyFile} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {json} from '../src/storage.mjs';
 import {installed} from '../src/releases.mjs';
@@ -14,12 +15,12 @@ const base=await mkdtemp(resolve('.local/memory-smoke-'));
 const root=join(base,'bundle');await mkdir(root);
 await copyFile(join(bundle.root,bundle.manifest.nodePath),join(root,'node.exe'));
 await copyFile(join(bundle.root,bundle.manifest.opencode.path),join(root,'opencode.exe'));
-await cp(join(bundle.root,bundle.manifest.skillsPath),join(root,'skills'),{recursive:true});
+const source=await prepareSkills(bundle,home);
 await mkdir(join(root,'launcher/src'),{recursive:true});
 await copyFile(join(bundle.root,'launcher/src/agent-instructions.md'),join(root,'launcher/src/agent-instructions.md'));
 await mkdir(join(root,'runtime/scripts'),{recursive:true});
 await copyFile(join(bundle.root,'runtime/scripts/windows-credential.ps1'),join(root,'runtime/scripts/windows-credential.ps1'));
-let skills=join(root,'skills');
+let skills=source.directory;
 const template=JSON.parse(await readFile(join(skills,'game-author/scripts/workspace-template.json'),'utf8'));
 let active,runtime,failure;
 const server=createServer(async(req,res)=>{
@@ -61,11 +62,12 @@ try{
   // Invalid project config must remain ignored, including when instructions are opted in.
   await writeFile(join(work,'opencode.json'),'{INVALID PROJECT CONFIG');
   active={skill,work,marker,step:0,done:false,expected:`# ${skill}\n\n- Домен: synthetic.invalid\n- ID игры: 424242\n\nИсточник: синтетический запрос автора.\n`};
-  const manifest={...bundle.manifest,nodePath:'node.exe',opencode:{...bundle.manifest.opencode,path:'opencode.exe'},skillsPath:'skills'};delete manifest.accountProxyPath;delete manifest.toolsPath;delete manifest.browserPath;
+  const manifest={...bundle.manifest,nodePath:'node.exe',opencode:{...bundle.manifest.opencode,path:'opencode.exe'}};delete manifest.accountProxyPath;delete manifest.toolsPath;delete manifest.browserPath;
   // A local inert MCP process cannot access any real engine.
   manifest.mcpPath='inert.mjs';await writeFile(join(root,manifest.mcpPath),'process.stdin.resume();');
-  skills=(await prepareSkills({root,manifest},join(base,'state-'+skill))).directory;
-  runtime=await startOpenCode({root,manifest},join(base,'state-'+skill),work);
+  await copyTestSkills(bundle,home,join(base,'state-'+skill));
+  skills=(await prepareSkills(bundle,join(base,'state-'+skill))).directory;
+  runtime=await startOpenCode({root,manifest},join(base,'state-'+skill),work,{selectedSkills:{directory:skills}});
   const post=async(path,body)=>{const r=await runtime.request(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});assert.ok(r.ok,await r.clone().text());return r.json();};
   const session=(await post('/api/session',{location:{directory:work},model:{providerID:'fixture',id:'fixture'},permissions:[{action:'*',resource:'*',effect:'allow'}]})).data;
   await post(`/api/session/${session.id}/prompt`,{text:`Используй ${skill}. Запомни домен synthetic.invalid и ID игры 424242. Обнови память игры, без внешних операций.`});
